@@ -306,10 +306,10 @@ function H.BuildUtilities()
     ROGUE = {1856,5277,31224,2983}, -- Vanish, Evasion, Cloak of Shadows, Sprint
     MAGE = {45438,66,1953}, -- Ice Block, Invisibility, Blink
     DRUID = {22812,61336,22842}, -- Barkskin, Survival Instincts, Frenzied Regeneration
-    PALADIN = {642,498,31884,1022}, -- Divine Shield, Divine Protection, Avenging Wrath, Hand of Protection
+    PALADIN = {642,498,633,1022,31884}, -- Divine Shield, Divine Protection, Lay on Hands, Hand of Protection, Avenging Wrath
     HUNTER = {5384,19263,781}, -- Feign Death, Deterrence, Disengage
     WARLOCK = {18708,47891}, -- Fel Domination, Shadow Ward
-    PRIEST = {47585,33206,586}, -- Dispersion, Pain Suppression, Fade
+    PRIEST = {47585,33206,586,8122}, -- Dispersion, Pain Suppression, Fade, Psychic Scream
     SHAMAN = {30823,2825,32182}, -- Shamanistic Rage, Bloodlust, Heroism
   }
   local spellList = cdsByClass[class] or {}
@@ -321,32 +321,52 @@ function H.BuildUtilities()
     -- Direct APIs first
     if IsPlayerSpell and IsPlayerSpell(id) then return true end
     if IsSpellKnown and IsSpellKnown(id) then return true end
-    -- Spellbook scan (Wrath uses GetSpellBookItemName)
+    -- Fallback: match by spell NAME (handles rank differences)
+    local targetName = GetSpellInfo and select(1, GetSpellInfo(id)) or nil
+    if not targetName or targetName == "" then
+      -- As a last resort, try to resolve via spellbook link id
+      local i = 1
+      while true do
+        local name = GetSpellBookItemName and GetSpellBookItemName(i, BOOKTYPE_SPELL) or nil
+        if not name then break end
+        local link = GetSpellLink(i, BOOKTYPE_SPELL)
+        if link then
+          local found = link:match("spell:(%d+)")
+          if found and tonumber(found) == id then return true end
+        end
+        i = i + 1
+        if i > 300 then break end
+      end
+      return false
+    end
+    -- Scan spellbook for any rank of the targetName
+    -- Some servers append ranks in the name (e.g., "Name (Rank 2)")
     local i = 1
     while true do
       local name = GetSpellBookItemName and GetSpellBookItemName(i, BOOKTYPE_SPELL) or nil
       if not name then break end
-      local link = GetSpellLink(i, BOOKTYPE_SPELL)
-      if link then
-        local found = link:match("spell:(%d+)")
-        if found and tonumber(found) == id then return true end
-      end
+      if name == targetName then return true end
+      -- Prefix/substring match to tolerate appended rank text
+      if targetName and name and string.find(name, targetName, 1, true) then return true end
       i = i + 1
       if i > 300 then break end
     end
     return false
   end
+  local added = 0
   for i, spellID in ipairs(spellList) do
     if IsKnown(spellID) then
       local name, _, icon = GetSpellInfo(spellID)
       if name then
         local b = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
         b:SetSize(28,28)
-        b:SetPoint("TOP", anchorParent, "BOTTOM", startX + (i-1)*32, anchorY)
+        -- Position using sequential index of added buttons to avoid gaps/overlaps
+        added = added + 1
+        b:SetPoint("TOP", anchorParent, "BOTTOM", startX + (added-1)*32, anchorY)
         b:SetAttribute("type", "spell")
         b:SetAttribute("spell", name)
         b:SetFrameStrata("HIGH")
-        b:SetFrameLevel(70 + i)
+        b:SetFrameLevel(70 + added)
         b:SetHitRectInsets(0,0,0,0)
         local it = b:CreateTexture(nil, "ARTWORK")
         it:SetAllPoints(b)
@@ -577,11 +597,13 @@ function H.BuildUtilities()
           if nm then
             local nb = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
             nb:SetSize(28,28)
-            nb:SetPoint("TOP", ap, "BOTTOM", startX2 + (i-1)*32, anchorY)
+            -- Use sequential index for rebuilt buttons to avoid gaps
+            local idx = #newButtons + 1
+            nb:SetPoint("TOP", ap, "BOTTOM", startX2 + (idx-1)*32, anchorY)
             nb:SetAttribute("type", "spell")
             nb:SetAttribute("spell", nm)
             nb:SetFrameStrata("HIGH")
-            nb:SetFrameLevel(70 + i)
+            nb:SetFrameLevel(70 + idx)
             nb:SetHitRectInsets(0,0,0,0)
             local nt = nb:CreateTexture(nil, "ARTWORK")
             nt:SetAllPoints(nb)
@@ -1102,6 +1124,25 @@ function H.InitReminders()
   rf:Hide()
   H.reminderFrame = rf
 
+  -- Event-driven updates so reminders reflect buffs expiring in combat
+  if not rf.eventDriver then
+    local ed = CreateFrame("Frame")
+    rf.eventDriver = ed
+    ed:RegisterEvent("PLAYER_LOGIN")
+    ed:RegisterEvent("PLAYER_ENTERING_WORLD")
+    ed:RegisterEvent("UNIT_AURA")
+    ed:RegisterEvent("PLAYER_TALENT_UPDATE")
+    ed:RegisterEvent("SPELLS_CHANGED")
+    ed:RegisterEvent("PLAYER_REGEN_DISABLED") -- entering combat
+    ed:RegisterEvent("PLAYER_REGEN_ENABLED")  -- leaving combat
+    ed:RegisterEvent("PLAYER_ALIVE")
+    ed:RegisterEvent("PLAYER_UNGHOST")
+    ed:SetScript("OnEvent", function(_, event, unit)
+      -- Update on any aura change; don't filter by unit to keep it responsive
+      if H.UpdateReminders then H.UpdateReminders() end
+    end)
+  end
+
   local function UpdateReminders()
     if not HardcoreHUDDB.reminders.enabled then rf:Hide(); return end
 
@@ -1508,9 +1549,25 @@ function H.InitReminders()
     local h = 16 + rows*(size+pad) - pad
     rf:SetSize(w, h)
     rf.text:SetText("")
+    -- Ensure the reminder frame is shown when there are actionable entries
+    if not rf:IsShown() then rf:Show() end
     if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.reminders then
       local miss = MissingCategories(); DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Missing: "..table.concat(miss, ", "))
     end
+  end
+
+  -- Lightweight periodic refresh to catch edge cases
+  if not rf.refreshDriver then
+    local rd = CreateFrame("Frame")
+    rf.refreshDriver = rd
+    local acc = 0
+    rd:SetScript("OnUpdate", function(_, dt)
+      acc = acc + dt
+      if acc >= 0.5 then
+        acc = 0
+        if H.UpdateReminders then H.UpdateReminders() end
+      end
+    end)
   end
   H.UpdateReminders = UpdateReminders
 
@@ -1761,6 +1818,7 @@ do
   local cfg = HardcoreHUDDB.visibility
   cfg.hideWhenShown = cfg.hideWhenShown or {
     "WorldMapFrame",
+    "HardcoreHUDOptions",
     "AtlasLootDefaultFrame",
     "AtlasLoot_GUI-Frame",
     "AtlasLootFrame",
@@ -1811,6 +1869,16 @@ do
     _G.WorldMapFrame:HookScript("OnShow", function() SetHUDShown(false) end)
     _G.WorldMapFrame:HookScript("OnHide", function() SetHUDShown(true) end)
     _G.WorldMapFrame._HardcoreHUDHooked = true
+  end
+  -- Explicit hook for options window so HUD never steals clicks over it
+  if HardcoreHUDOptions and not HardcoreHUDOptions._HardcoreHUDHooked then
+    HardcoreHUDOptions:HookScript("OnShow", function()
+      SetHUDShown(false)
+    end)
+    HardcoreHUDOptions:HookScript("OnHide", function()
+      SetHUDShown(true)
+    end)
+    HardcoreHUDOptions._HardcoreHUDHooked = true
   end
   -- In case Bars.lua created cdIcons separately, hide their buttons too
   function H._ApplyMapVisibilityToCDIcons(shown)

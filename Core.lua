@@ -50,6 +50,8 @@ ev:RegisterEvent("UNIT_MAXHEALTH")
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_COMBO_POINTS")
 ev:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+ev:RegisterEvent("UNIT_TARGET")
+ev:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
 ev:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     H.Init()
@@ -67,6 +69,12 @@ ev:SetScript("OnEvent", function(_, event, ...)
     H.UpdateTarget()
   elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
     H.OnCombatLog(...)
+  elseif event == "UNIT_TARGET" then
+    local unit = ...
+    if H.OnUnitTarget then H.OnUnitTarget(unit) end
+  elseif event == "UNIT_THREAT_LIST_UPDATE" then
+    local unit = ...
+    if H.OnThreatListUpdate then H.OnThreatListUpdate(unit) end
   end
 end)
 

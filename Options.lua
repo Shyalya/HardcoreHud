@@ -4,6 +4,9 @@ function H.BuildOptions()
   -- Options GUI
   local f = CreateFrame("Frame", "HardcoreHUDOptions", UIParent)
   H.optionsFrame = f
+  -- Ensure options window draws above all HUD elements and absorbs clicks
+  if f.SetFrameStrata then f:SetFrameStrata("FULLSCREEN_DIALOG") end
+  f:SetFrameLevel((UIParent:GetFrameLevel() or 0) + 100)
   -- Ensure warnings table defaults exist so tests work out-of-the-box
   HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
   if HardcoreHUDDB.warnings.enabled == nil then HardcoreHUDDB.warnings.enabled = true end
@@ -37,15 +40,17 @@ function H.BuildOptions()
   -- Ensure columns have proper hit testing and draw order
   leftCol:EnableMouse(false)
   middleCol:EnableMouse(false)
+  -- Enable mouse on right column so its buttons receive clicks
   rightCol:EnableMouse(true)
   leftCol:SetFrameStrata("MEDIUM")
   middleCol:SetFrameStrata("MEDIUM")
-  rightCol:SetFrameStrata("HIGH")
+  -- Make right column draw at same strata/level to avoid overlaying left/middle
+  -- Match options frame strata so right-column buttons sit on the same window
+  rightCol:SetFrameStrata("FULLSCREEN_DIALOG")
   rightCol:SetFrameLevel(f:GetFrameLevel()+10)
 
   -- Thickness slider (left column)
   local thickness = CreateFrame("Slider", "HardcoreHUDThicknessSlider", f, "OptionsSliderTemplate")
-  thickness:ClearAllPoints()
   thickness:SetPoint("TOPLEFT", leftCol, "TOPLEFT", 20, 0)
   thickness:SetMinMaxValues(6, 32)
   thickness:SetValueStep(1)
@@ -60,7 +65,7 @@ function H.BuildOptions()
     H.ApplyLayout()
   end)
 
-  -- Height slider
+  
   local height = CreateFrame("Slider", "HardcoreHUDHeightSlider", f, "OptionsSliderTemplate")
   height:ClearAllPoints()
   height:SetPoint("TOPLEFT", thickness, "BOTTOMLEFT", 0, -34)
@@ -80,7 +85,6 @@ function H.BuildOptions()
   local sep = CreateFrame("Slider", "HardcoreHUDSeparationSlider", f, "OptionsSliderTemplate")
   sep:ClearAllPoints()
   sep:SetPoint("TOPLEFT", height, "BOTTOMLEFT", 0, -34)
-  sep:SetMinMaxValues(80, 240)
   sep:SetValueStep(10)
   sep:SetValue(HardcoreHUDDB.layout and HardcoreHUDDB.layout.separation or 140)
   if _G[sep:GetName().."Low"] then _G[sep:GetName().."Low"]:SetText("80") end
@@ -106,7 +110,7 @@ function H.BuildOptions()
     print("HardcoreHUD: Warnings "..(HardcoreHUDDB.warnings.enabled and "ON" or "OFF"))
     if not HardcoreHUDDB.warnings.enabled then
       if H.HideCriticalHPWarning then H.HideCriticalHPWarning() end
-      if H.skull then H.skull:Hide() end
+    lock:SetPoint("TOPLEFT", critThresh, "BOTTOMLEFT", 0, -18)
       if H.EliteAttentionText then H.EliteAttentionText:Hide() end
       if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
     else
@@ -149,11 +153,11 @@ function H.BuildOptions()
   if HardcoreHUDDB.warnings.criticalThreshold == nil then HardcoreHUDDB.warnings.criticalThreshold = 0.20 end
   local critThresh = CreateFrame("Slider", "HardcoreHUDCritThreshold", f, "OptionsSliderTemplate")
   critThresh:ClearAllPoints()
-  critThresh:SetPoint("TOPLEFT", perf, "BOTTOMLEFT", 0, -34)
+  -- Move Critical HP Threshold to the right column below reminder categories
+  critThresh:SetPoint("TOPLEFT", rCore, "BOTTOMLEFT", 0, -34)
   critThresh:SetMinMaxValues(0.15, 0.50)
   critThresh:SetValueStep(0.01)
   if critThresh.SetObeyStepOnDrag then critThresh:SetObeyStepOnDrag(true) end
-  critThresh:SetValue(HardcoreHUDDB.warnings.criticalThreshold or 0.20)
   if _G[critThresh:GetName().."Low"] then _G[critThresh:GetName().."Low"]:SetText("15%") end
   if _G[critThresh:GetName().."High"] then _G[critThresh:GetName().."High"]:SetText("50%") end
   if _G[critThresh:GetName().."Text"] then _G[critThresh:GetName().."Text"]:SetText("Critical HP Threshold") end
@@ -188,7 +192,7 @@ function H.BuildOptions()
   if HardcoreHUDDB.ticker.fsOpacity == nil then HardcoreHUDDB.ticker.fsOpacity = 0.25 end
   local fsOpacity = CreateFrame("Slider", "HardcoreHUDFiveSecOpacity", f, "OptionsSliderTemplate")
   fsOpacity:ClearAllPoints()
-  fsOpacity:SetPoint("TOPLEFT", multi, "BOTTOMLEFT", 0, -34)
+  fsOpacity:SetPoint("TOPLEFT", spikeWarn, "BOTTOMLEFT", 0, -34)
   fsOpacity:SetMinMaxValues(0.05, 0.80)
   fsOpacity:SetValueStep(0.05)
   fsOpacity:SetValue(HardcoreHUDDB.ticker.fsOpacity)
@@ -207,6 +211,7 @@ function H.BuildOptions()
 
   local lock = CreateFrame("CheckButton", "HardcoreHUDLock", f, "InterfaceOptionsCheckButtonTemplate")
   lock:ClearAllPoints()
+  -- Return Lock HUD to middle column under performance toggle
   lock:SetPoint("TOPLEFT", perf, "BOTTOMLEFT", 0, -18)
   lock:SetSize(24,24)
   lock:SetChecked(true)
@@ -289,6 +294,8 @@ end
   center:SetSize(170, 24)
   center:SetText("HUD zentrieren")
     center:SetText("Center HUD")
+  center:SetFrameStrata("FULLSCREEN_DIALOG")
+  center:SetFrameLevel(rightCol:GetFrameLevel()+1)
   center:SetScript("OnClick", function()
     HardcoreHUDDB.pos = { x = 0, y = -150 }
     H.root:ClearAllPoints()
@@ -301,12 +308,15 @@ end
   testsLabel:ClearAllPoints()
   testsLabel:SetPoint("TOPLEFT", center, "BOTTOMLEFT", 0, -24)
   testsLabel:SetText("Warning Tests")
+  testsLabel:SetDrawLayer("OVERLAY")
 
   local testCrit = CreateFrame("Button", nil, rightCol, "UIPanelButtonTemplate")
   testCrit:ClearAllPoints()
   testCrit:SetPoint("TOPLEFT", testsLabel, "BOTTOMLEFT", 0, -8)
   testCrit:SetSize(150, 24)
   testCrit:SetText("Test Critical Health")
+  testCrit:SetFrameStrata("FULLSCREEN_DIALOG")
+  testCrit:SetFrameLevel(rightCol:GetFrameLevel()+1)
   testCrit:SetScript("OnClick", function()
     print("HardcoreHUD: Test Critical clicked")
     if H.TriggerCriticalHPTest then H.TriggerCriticalHPTest() else print("HardcoreHUD: TriggerCriticalHPTest missing") end
@@ -323,6 +333,8 @@ end
   testElite:SetPoint("TOPLEFT", testCrit, "BOTTOMLEFT", 0, -10)
   testElite:SetSize(150, 24)
   testElite:SetText("Test Elite/+2 Skull")
+  testElite:SetFrameStrata("FULLSCREEN_DIALOG")
+  testElite:SetFrameLevel(rightCol:GetFrameLevel()+1)
   testElite:SetScript("OnClick", function()
     print("HardcoreHUD: Test Elite clicked")
     if H.TriggerEliteSkullTest then H.TriggerEliteSkullTest() else print("HardcoreHUD: TriggerEliteSkullTest missing") end
@@ -339,6 +351,8 @@ end
   testMulti:SetPoint("TOPLEFT", testElite, "BOTTOMLEFT", 0, -10)
   testMulti:SetSize(150, 24)
   testMulti:SetText("Test Multi-Aggro")
+  testMulti:SetFrameStrata("FULLSCREEN_DIALOG")
+  testMulti:SetFrameLevel(rightCol:GetFrameLevel()+1)
   testMulti:SetScript("OnClick", function()
     print("HardcoreHUD: Test Multi-Aggro clicked")
     if H.TriggerMultiAggroTest then H.TriggerMultiAggroTest() else print("HardcoreHUD: TriggerMultiAggroTest missing") end
@@ -349,6 +363,23 @@ end
     GameTooltip:Show()
   end)
   testMulti:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  local testTTD = CreateFrame("Button", nil, rightCol, "UIPanelButtonTemplate")
+  testTTD:ClearAllPoints()
+  testTTD:SetPoint("TOPLEFT", testMulti, "BOTTOMLEFT", 0, -10)
+  testTTD:SetSize(150, 24)
+  testTTD:SetText("Test TTD Bar")
+  testTTD:SetFrameStrata("FULLSCREEN_DIALOG")
+  testTTD:SetFrameLevel(rightCol:GetFrameLevel()+1)
+  testTTD:SetScript("OnClick", function()
+    if H.TriggerTTDTest then H.TriggerTTDTest() else print("HardcoreHUD: TriggerTTDTest missing") end
+  end)
+  testTTD:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Simulate damage; show TTD bar")
+    GameTooltip:Show()
+  end)
+  testTTD:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   -- Buff/Consumable reminder toggle
   local remind = CreateFrame("CheckButton", "HardcoreHUDBuffRemind", f, "OptionsCheckButtonTemplate")
@@ -373,12 +404,15 @@ end
   local remCatLabel = rightCol:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   remCatLabel:SetPoint("TOPLEFT", testMulti, "BOTTOMLEFT", 0, -20)
   remCatLabel:SetText("Reminder Categories")
+  remCatLabel:SetDrawLayer("OVERLAY")
 
   -- Only keep Core Buffs toggle; Food/Flask removed per request
   local rCore = CreateFrame("CheckButton", "HardcoreHUDRemindCore", rightCol, "OptionsCheckButtonTemplate")
   rCore:SetPoint("TOPLEFT", remCatLabel, "BOTTOMLEFT", 0, -8)
   rCore:SetChecked(HardcoreHUDDB.reminders.categories.survival)
   if _G[rCore:GetName().."Text"] then _G[rCore:GetName().."Text"]:SetText("Core Buffs: Fortitude/Mark/Kings") end
+  rCore:SetFrameStrata("FULLSCREEN_DIALOG")
+  rCore:SetFrameLevel(rightCol:GetFrameLevel()+1)
   rCore:SetScript("OnClick", function(self)
     HardcoreHUDDB.reminders.categories.survival = self:GetChecked()
     if H.UpdateReminders then H.UpdateReminders() end
@@ -438,6 +472,8 @@ end
     HardcoreHUDDB.spike.enabled = self:GetChecked()
     print("HardcoreHUD: TTD bar "..(HardcoreHUDDB.spike.enabled and "ON" or "OFF"))
     if H.spikeFrame and not HardcoreHUDDB.spike.enabled then H.spikeFrame:Hide() end
+    if H.spikeFrame and HardcoreHUDDB.spike.enabled and (HardcoreHUDDB.spike.alwaysShow == true) then H.spikeFrame:Show() end
+    if H.UpdateSpikeVisibility then H.UpdateSpikeVisibility() end
   end)
 
   local spikeWin = CreateFrame("Slider", "HardcoreHUDSpikeWindowSlider", f, "OptionsSliderTemplate")
@@ -471,6 +507,27 @@ end
     val = tonumber(string.format("%.1f", val))
     HardcoreHUDDB.spike.warnThreshold = val
     print("HardcoreHUD: spike warnThreshold="..val.."s")
+  end)
+
+  -- Always show TTD bar toggle
+  HardcoreHUDDB.spike.alwaysShow = HardcoreHUDDB.spike.alwaysShow or false
+  local spikeAlways = CreateFrame("CheckButton", "HardcoreHUDSpikeAlwaysShow", f, "OptionsCheckButtonTemplate")
+  spikeAlways:ClearAllPoints()
+  spikeAlways:SetPoint("TOPLEFT", spikeWarn, "BOTTOMLEFT", 0, -18)
+  spikeAlways:SetChecked(HardcoreHUDDB.spike.alwaysShow)
+  if _G[spikeAlways:GetName().."Text"] then _G[spikeAlways:GetName().."Text"]:SetText("TTD immer anzeigen") end
+    if _G[spikeAlways:GetName().."Text"] then _G[spikeAlways:GetName().."Text"]:SetText("Always Show TTD Bar") end
+  spikeAlways:SetScript("OnClick", function(self)
+    HardcoreHUDDB.spike.alwaysShow = self:GetChecked()
+    print("HardcoreHUD: TTD alwaysShow="..(HardcoreHUDDB.spike.alwaysShow and "ON" or "OFF"))
+    if H.spikeFrame then
+      if HardcoreHUDDB.spike.enabled and HardcoreHUDDB.spike.alwaysShow then
+        H.spikeFrame:Show()
+      else
+        -- Defer to normal visibility rules when not forced
+        if H.UpdateSpikeVisibility then H.UpdateSpikeVisibility() end
+      end
+    end
   end)
 
   -- Minimap button to open options (created in Core.Init for reliability)

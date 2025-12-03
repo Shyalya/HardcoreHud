@@ -51,13 +51,21 @@ function H.BuildWarnings()
     H.eliteIcons[i] = icon
   end
 
-  -- Unified danger text (elite or multi-aggro)
-  local eliteText = UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  -- Unified danger text (elite or multi-aggro) on a dedicated high-strata frame
+  local eliteTextFrame = CreateFrame("Frame", nil, UIParent)
+  eliteTextFrame:SetSize(340, 40)
+  eliteTextFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
+  eliteTextFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+  eliteTextFrame:Hide()
+  local eliteText = eliteTextFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  eliteText:SetPoint("CENTER", eliteTextFrame, "CENTER")
   eliteText:SetText("Attention Danger Attention")
   eliteText:SetTextColor(1, 0.9, 0.2, 1)
-  eliteText:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
-  eliteText:SetDrawLayer("OVERLAY")
-  eliteText:Hide()
+  -- Improve legibility: bold outline + subtle shadow
+  if STANDARD_TEXT_FONT then eliteText:SetFont(STANDARD_TEXT_FONT, 20, "OUTLINE") end
+  eliteText:SetShadowColor(0,0,0,0.85)
+  eliteText:SetShadowOffset(1,-1)
+  H.eliteTextFrame = eliteTextFrame
   H.EliteAttentionText = eliteText
 
   -- Damage spike / Time-to-Death bar
@@ -68,6 +76,7 @@ function H.BuildWarnings()
   spike:SetMinMaxValues(0, HardcoreHUDDB.spike.maxDisplay or 10)
   spike:SetValue(0)
   spike:SetPoint("TOP", UIParent, "TOP", 0, -120)
+  spike:SetFrameStrata("FULLSCREEN_DIALOG")
   spike:Hide()
   local sbg = spike:CreateTexture(nil, "BACKGROUND")
   sbg:SetAllPoints(spike)
@@ -93,6 +102,22 @@ function H.BuildWarnings()
   perf.text = ptxt
   perf:Hide()
   H.perfWarn = perf
+end
+
+-- Centralized spike/TTD visibility helper to honor alwaysShow
+function H.UpdateSpikeVisibility()
+  local cfg = HardcoreHUDDB.spike
+  if not (cfg and cfg.enabled) then if H.spikeFrame then H.spikeFrame:Hide() end return end
+  if cfg.alwaysShow then
+    if H.spikeFrame then H.spikeFrame:Show() end
+    return
+  end
+  -- Default behavior: only show when there are recent events
+  if H._spikeEvents and #H._spikeEvents > 0 then
+    if H.spikeFrame then H.spikeFrame:Show() end
+  else
+    if H.spikeFrame then H.spikeFrame:Hide() end
+  end
 end
 
 function H.ShowCriticalHPWarning()
@@ -134,6 +159,25 @@ end
 function H.HideCriticalHPWarning()
   H.warnHP:Hide()
   if H.critIcon then H.critIcon:Hide() end
+end
+
+-- Auto-hide critical HP warning when HP recovers above threshold
+if not H._critHPDriver then
+  local cf = CreateFrame("Frame")
+  H._critHPDriver = cf
+  cf:RegisterEvent("UNIT_HEALTH")
+  cf:RegisterEvent("PLAYER_ENTERING_WORLD")
+  cf:SetScript("OnEvent", function(_, event, unit)
+    if unit and unit ~= "player" then return end
+    if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.criticalHP) then return end
+    local hp = UnitHealth("player") or 0
+    local max = UnitHealthMax("player") or 1
+    local ratio = max > 0 and (hp / max) or 1
+    local thresh = (HardcoreHUDDB.warnings.criticalThreshold or 0.20)
+    if ratio > thresh then
+      H.HideCriticalHPWarning()
+    end
+  end)
 end
 
 local function PlayCriticalSound()
@@ -231,9 +275,26 @@ function H.TriggerEliteSkullTest()
   end)
 end
 
+-- Simulate Time-to-Death bar activity for testing
+function H.TriggerTTDTest()
+  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 10, warnThreshold = 3 }
+  HardcoreHUDDB.spike.enabled = true
+  H._spikeEvents = {}
+  local now = GetTime()
+  -- Simulate incoming damage over the window to produce a TTD value
+  local win = HardcoreHUDDB.spike.window or 5
+  local samples = 10
+  local per = win / samples
+  for i=0,samples do
+    table.insert(H._spikeEvents, { t = now - (i * per), a = 500 })
+  end
+  if H.spikeFrame then H.spikeFrame:Show() end
+  print("HardcoreHUD: TTD test triggered")
+end
+
 function H.CheckSkull()
   if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false) then return end
-  if not UnitExists("target") then H.skull:Hide(); if H.EliteAttentionText then H.EliteAttentionText:Hide() end; if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end; return end
+  if not UnitExists("target") then H.skull:Hide(); if H.EliteAttentionText then H.EliteAttentionText:Hide() end; if H.eliteTextFrame then H.eliteTextFrame:Hide() end; if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end; return end
   local lvl = UnitLevel("target") or 0
   local my = UnitLevel("player") or 0
   local classif = UnitClassification("target") or ""
@@ -251,6 +312,7 @@ function H.CheckSkull()
   -- We only show skull/icons here if elite/high; multi-aggro handled in combat log
   if (HardcoreHUDDB.warnings.levelElite and hostile and (elite or high)) then
     H.skull:Show()
+    if H.eliteTextFrame then H.eliteTextFrame:Show() end
     if H.EliteAttentionText then H.EliteAttentionText:Show() end
     if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Show() end end
   else
@@ -258,6 +320,7 @@ function H.CheckSkull()
     -- Hide visuals only if multi-aggro not active
     if not H._multiAggroActive then
       if H.EliteAttentionText then H.EliteAttentionText:Hide() end
+      if H.eliteTextFrame then H.eliteTextFrame:Hide() end
       if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
     end
   end
@@ -269,11 +332,13 @@ function H.ShowMultiAggroWarning()
   if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.multiAggro) then return end
   local wasActive = H._multiAggroActive
   H._multiAggroActive = true
-  if H.EliteAttentionText then H.EliteAttentionText:SetText("Attention Danger Attention"); H.EliteAttentionText:Show() end
+  if H.EliteAttentionText then H.EliteAttentionText:SetText("Attention Danger Attention") end
+  if H.eliteTextFrame then H.eliteTextFrame:Show() end
+  if H.EliteAttentionText then H.EliteAttentionText:Show() end
   if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Show() end end
   -- Optional debug output
   if HardcoreHUDDB.debugMultiAggro then
-    local c=0; if type(attackers)=="table" then for _ in pairs(attackers) do c=c+1 end end
+    local c=0; if type(H.attackers)=="table" then for _ in pairs(H.attackers) do c=c+1 end end
     print("HardcoreHUD: Multi-aggro active ("..c.." attackers)")
   end
   if not wasActive then
@@ -286,18 +351,55 @@ local function HideMultiAggroVisuals()
   -- If skull (elite/high) still active, keep visuals; else hide
   if H.skull and H.skull:IsShown() then return end
   if H.EliteAttentionText then H.EliteAttentionText:Hide() end
+  if H.eliteTextFrame then H.eliteTextFrame:Hide() end
   if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
 end
 
 -- Multi-aggro detection
-local attackers = {}
-local WINDOW = 5 -- seconds to keep attacker GUIDs
+-- Use addon table for attacker tracking so all functions share the same reference
+H.attackers = H.attackers or {}
+local WINDOW = 8 -- seconds to keep attacker GUIDs (extend to reduce flicker)
 local MULTI_UPDATE_INTERVAL = 0.5
 
 local function prune(now)
-  for guid, ts in pairs(attackers) do
-    if now - ts > WINDOW then attackers[guid] = nil end
+  for guid, ts in pairs(H.attackers) do
+    if now - ts > WINDOW then H.attackers[guid] = nil end
   end
+end
+
+-- Lightweight threat-based fallback: add target/focus if they are hostile and targeting the player
+local function ThreatFallbackTouch()
+  local function addIfAggro(unit)
+    if not UnitExists(unit) then return end
+    local reaction = UnitReaction("player", unit)
+    local hostile = false
+    if reaction then hostile = (reaction <= 3) else hostile = UnitIsEnemy("player", unit) and not UnitIsFriend("player", unit) end
+    if not hostile then return end
+    if UnitExists(unit.."target") and UnitIsUnit(unit.."target", "player") then
+      local guid = UnitGUID(unit)
+      if guid then H.attackers[guid] = GetTime() end
+    end
+  end
+  addIfAggro("target")
+  addIfAggro("focus")
+  addIfAggro("mouseover")
+  -- Group-aware scans: party member targets and player's pet target
+  for i=1,4 do addIfAggro("party"..i.."target") end
+  addIfAggro("pettarget")
+end
+
+-- React to unit target changes to keep attackers populated when swapping targets
+function H.OnUnitTarget(unit)
+  if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.multiAggro) then return end
+  ThreatFallbackTouch()
+  H.EvaluateMultiAggro()
+end
+
+-- Threat list changes (Wrath): refresh attackers when unit threat updates
+function H.OnThreatListUpdate(unit)
+  if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.multiAggro) then return end
+  ThreatFallbackTouch()
+  H.EvaluateMultiAggro()
 end
 
 -- WotLK 3.3.5 combat log layout differs from modern; we take only first 8 meaningful args.
@@ -317,7 +419,7 @@ function H.OnCombatLog(...)
     or subevent == "SWING_MISSED" or subevent == "RANGE_MISSED" or subevent == "SPELL_MISSED" or subevent == "DAMAGE_SHIELD_MISSED"
     or subevent == "SPELL_AURA_APPLIED" or subevent == "SPELL_AURA_REFRESH" or subevent == "SPELL_AURA_APPLIED_DOSE" or subevent == "SPELL_AURA_REMOVED_DOSE"
     or subevent == "SPELL_CAST_START" or subevent == "SPELL_CAST_SUCCESS" then
-      attackers[srcGUID] = now; prune(now); if HardcoreHUDDB.debugMultiAggro then local c=0; for _ in pairs(attackers) do c=c+1 end print("HardcoreHUD: CL event="..subevent.." attackers="..c) end; H.EvaluateMultiAggro()
+      H.attackers[srcGUID] = now; prune(now); if HardcoreHUDDB.debugMultiAggro then local c=0; for _ in pairs(H.attackers) do c=c+1 end print("HardcoreHUD: CL event="..subevent.." attackers="..c) end; H.EvaluateMultiAggro()
     end
   end
   -- Damage spike accumulation
@@ -351,13 +453,16 @@ end
 function H.TriggerMultiAggroTest()
   -- Force show for test regardless of DB toggles
   H._multiAggroActive = true
-  if H.EliteAttentionText then H.EliteAttentionText:SetText("Attention Danger Attention"); H.EliteAttentionText:Show() end
+  if H.EliteAttentionText then H.EliteAttentionText:SetText("Attention Danger Attention") end
+  if H.eliteTextFrame then H.eliteTextFrame:Show() end
+  if H.EliteAttentionText then H.EliteAttentionText:Show() end
   if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Show() end end
   PlayMultiAggroSound()
   After(4.0, function()
     H._multiAggroActive=false
     if H.skull and H.skull:IsShown() then return end
     if H.EliteAttentionText then H.EliteAttentionText:Hide() end
+    if H.eliteTextFrame then H.eliteTextFrame:Hide() end
     if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
   end)
 end
@@ -368,7 +473,7 @@ function H.EvaluateMultiAggro()
   local now = GetTime()
   prune(now)
   local count = 0
-  for _ in pairs(attackers) do count = count + 1 end
+  for _ in pairs(H.attackers) do count = count + 1 end
   local threshold = HardcoreHUDDB.warnings.multiAggroThreshold or 2
   if count >= threshold then
     H.ShowMultiAggroWarning()
@@ -390,6 +495,8 @@ if not H.multiAggroUpdateFrame then
     if acc >= MULTI_UPDATE_INTERVAL then
       acc = 0
       if H._multiAggroActive or (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.multiAggro) then
+        -- Keep attackers fresh even when combat log is quiet
+        ThreatFallbackTouch()
         H.EvaluateMultiAggro()
       end
     end
