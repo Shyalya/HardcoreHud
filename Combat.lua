@@ -125,6 +125,13 @@ end
 
 function H.ShowCriticalHPWarning()
   if HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.criticalHP then
+    if not H.warnHP then
+      local w = CreateFrame("Frame", nil, UIParent)
+      w:SetSize(1,1)
+      w:SetPoint("CENTER")
+      w:Hide()
+      H.warnHP = w
+    end
     H.warnHP:Show()
     if H.critIcon then H.critIcon:Show() end
   end
@@ -160,8 +167,9 @@ if not H._perfDriver then
   end)
 end
 function H.HideCriticalHPWarning()
-  H.warnHP:Hide()
+  if H.warnHP and H.warnHP.Hide then H.warnHP:Hide() end
   if H.critIcon then H.critIcon:Hide() end
+  if H.UpdateCriticalOverlay then H.UpdateCriticalOverlay() end
 end
 
 -- Auto-hide critical HP warning when HP recovers above threshold

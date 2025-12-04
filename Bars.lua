@@ -33,6 +33,24 @@ local function getBarTexture()
   return "Interface/TargetingFrame/UI-StatusBar"
 end
 
+-- Thin 1px border around status bars
+local function addThinBorder(frame)
+  if not frame or frame._thinBorder then return end
+  local lines = {}
+  local function mk()
+    local t = frame:CreateTexture(nil, "OVERLAY")
+    t:SetColorTexture(0,0,0,0.9)
+    return t
+  end
+  lines.top = mk(); lines.bottom = mk(); lines.left = mk(); lines.right = mk()
+  frame._thinBorder = lines
+  -- initial placement; will be sized in ApplyLayout too
+  lines.top:ClearAllPoints(); lines.top:SetPoint("TOPLEFT", frame, "TOPLEFT", -1, 1); lines.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 1, 1); lines.top:SetHeight(1)
+  lines.bottom:ClearAllPoints(); lines.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", -1, -1); lines.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 1, -1); lines.bottom:SetHeight(1)
+  lines.left:ClearAllPoints(); lines.left:SetPoint("TOPLEFT", frame, "TOPLEFT", -1, 1); lines.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", -1, -1); lines.left:SetWidth(1)
+  lines.right:ClearAllPoints(); lines.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 1, 1); lines.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 1, -1); lines.right:SetWidth(1)
+end
+
 -- Robust check if player knows a spell (Wrath-compatible)
 local function IsKnown(id)
   if IsPlayerSpell and IsPlayerSpell(id) then return true end
@@ -68,6 +86,7 @@ function H.BuildBars()
   local barHeight = HardcoreHUDDB.layout and HardcoreHUDDB.layout.height or 200
   local gap = HardcoreHUDDB.layout and HardcoreHUDDB.layout.gap or 8
   local separation = HardcoreHUDDB.layout and HardcoreHUDDB.layout.separation or 140
+  local centerOffsetY = HardcoreHUDDB.layout and HardcoreHUDDB.layout.centerOffsetY or 0
 
   -- Left: HP bar (vertical)
   local hp = CreateFrame("StatusBar", nil, root)
@@ -77,7 +96,7 @@ function H.BuildBars()
   hp:SetValue(UnitHealth("player"))
   hp:SetOrientation("VERTICAL")
   hp:SetSize(barThickness, barHeight)
-  hp:SetPoint("RIGHT", root, "CENTER", -separation, 0)
+  hp:SetPoint("RIGHT", root, "CENTER", -separation, centerOffsetY)
   local hpText = hp:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   bars.hpText = hpText
   hpText:SetPoint("TOP", hp, "BOTTOM", 0, -14)
@@ -116,6 +135,10 @@ function H.BuildBars()
   tickLine:ClearAllPoints()
   tickLine:SetPoint("BOTTOM", pow, "BOTTOM", 0, 0)
   tickLine:SetSize(pow:GetWidth(), 2)
+
+  -- Add thin borders to player bars
+  addThinBorder(hp)
+  addThinBorder(pow)
 
   -- Legacy sink: a hidden tick StatusBar to satisfy any legacy references
   if not bars.tick then
@@ -156,7 +179,7 @@ function H.BuildBars()
   thp:SetValue(UnitHealth("target") or 0)
   thp:SetOrientation("VERTICAL")
   thp:SetSize(barThickness, barHeight)
-  thp:SetPoint("LEFT", root, "CENTER", separation, 0)
+  thp:SetPoint("LEFT", root, "CENTER", separation, centerOffsetY)
   thp:SetStatusBarColor(1,0,0)
   local thpText = thp:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   bars.targetHPText = thpText
@@ -179,6 +202,10 @@ function H.BuildBars()
   bars.targetPowText = tpowText
   tpowText:SetPoint("TOP", tpow, "BOTTOM", 0, -18)
   tpowText:SetJustifyH("CENTER")
+
+  -- Add thin borders to target bars
+  addThinBorder(thp)
+  addThinBorder(tpow)
 
   -- Class cooldowns panel positioned under potion/hearth buttons (left-aligned)
   local cds = CreateFrame("Frame", nil, root)
@@ -237,12 +264,14 @@ function H.ApplyLayout()
   local bh = HardcoreHUDDB.layout and HardcoreHUDDB.layout.height or 200
   local gap = HardcoreHUDDB.layout and HardcoreHUDDB.layout.gap or 8
   local sep = HardcoreHUDDB.layout and HardcoreHUDDB.layout.separation or 140
+  local centerOffsetY = HardcoreHUDDB.layout and HardcoreHUDDB.layout.centerOffsetY or 0
   bars.hp:SetSize(t, bh)
-  bars.hp:ClearAllPoints(); bars.hp:SetPoint("RIGHT", H.root, "CENTER", -sep, 0)
+  bars.hp:ClearAllPoints(); bars.hp:SetPoint("RIGHT", H.root, "CENTER", -sep, centerOffsetY)
   bars.pow:SetSize(t, bh)
   bars.pow:ClearAllPoints(); bars.pow:SetPoint("LEFT", bars.hp, "RIGHT", gap, 0)
+  if bars.tickFill then bars.tickFill:SetWidth(bars.pow:GetWidth()) end
   bars.targetHP:SetSize(t, bh)
-  bars.targetHP:ClearAllPoints(); bars.targetHP:SetPoint("LEFT", H.root, "CENTER", sep, 0)
+  bars.targetHP:ClearAllPoints(); bars.targetHP:SetPoint("LEFT", H.root, "CENTER", sep, centerOffsetY)
   bars.targetPow:SetSize(t, bh)
   bars.targetPow:ClearAllPoints(); bars.targetPow:SetPoint("LEFT", bars.targetHP, "RIGHT", gap, 0)
   if H.ApplyBarTexture then H.ApplyBarTexture() end
@@ -343,7 +372,12 @@ function H.UpdatePower()
   local ph = H.bars.pow:GetHeight()
   if pType == 0 then
     if inFive then bars.fsFill:Show() else bars.fsFill:Hide() end
-    if cur == UnitPowerMax("player",0) then manaPaused=true; haveManaCycle=false; if bars.tickFill then bars.tickFill:SetHeight(0) end end
+    if cur == UnitPowerMax("player",0) then
+      manaPaused=true; haveManaCycle=false;
+      if bars.tickFill then bars.tickFill:Hide() end
+    else
+      if bars.tickFill then bars.tickFill:Show() end
+    end
   elseif pType == 3 then
     -- switching to energy: clear mana state and show tick overlay
     bars.fsFill:Hide()
@@ -560,7 +594,7 @@ driver:SetScript("OnUpdate", function(_, dt)
       local diff = now - manaTickStart
       if diff >= MANA_TICK then manaTickStart = manaTickStart + MANA_TICK; diff = diff - MANA_TICK end
       local y = H.bars.pow:GetHeight() * (diff / MANA_TICK)
-      if bars.tickFill then bars.tickFill:ClearAllPoints(); bars.tickFill:SetPoint("BOTTOM", H.bars.pow, "BOTTOM", 0, y) end
+      if bars.tickFill then bars.tickFill:ClearAllPoints(); bars.tickFill:SetPoint("BOTTOM", H.bars.pow, "BOTTOM", 0, y); bars.tickFill:Show() end
     end
   end
   -- energy tick
@@ -575,7 +609,7 @@ driver:SetScript("OnUpdate", function(_, dt)
     energyCycle = energyCycle + accum
     if energyCycle >= ENERGY_TICK then energyCycle = energyCycle - ENERGY_TICK end
     local y = H.bars.pow:GetHeight() * (energyCycle / ENERGY_TICK)
-    if bars.tickFill then bars.tickFill:ClearAllPoints(); bars.tickFill:SetPoint("BOTTOM", H.bars.pow, "BOTTOM", 0, y) end
+    if bars.tickFill then bars.tickFill:ClearAllPoints(); bars.tickFill:SetPoint("BOTTOM", H.bars.pow, "BOTTOM", 0, y); bars.tickFill:Show() end
   end
 
   -- update cooldown overlays

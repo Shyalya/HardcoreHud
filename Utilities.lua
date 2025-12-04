@@ -1,4 +1,7 @@
 local H = HardcoreHUD
+HardcoreHUDDB = HardcoreHUDDB or {}
+-- Ensure saved variables table exists before any access
+HardcoreHUDDB = HardcoreHUDDB or {}
 H.UtilitiesVersion = "2025-11-29b"
 
 -- Healing potion itemIDs (Wrath 3.3.5 common)
@@ -14,6 +17,57 @@ local HEAL_POTION_RANKS = {
   [22829] = 7,  -- Super Healing Potion
   [33447] = 8,  -- Runic Healing Potion
 }
+-- Ensure reminders react to aura changes and combat transitions so icons reappear when buffs expire in combat.
+if not H._reminderEvents then
+  H._reminderEvents = CreateFrame("Frame", nil, UIParent)
+  H._reminderEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+  H._reminderEvents:RegisterEvent("UNIT_AURA")
+  H._reminderEvents:RegisterEvent("PLAYER_REGEN_DISABLED") -- entering combat
+  H._reminderEvents:RegisterEvent("PLAYER_REGEN_ENABLED")  -- leaving combat
+  H._reminderEvents:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+  H._reminderEvents:SetScript("OnEvent", function(self, event, ...)
+    if not HardcoreHUDDB or not HardcoreHUDDB.reminders or HardcoreHUDDB.reminders.enabled == false then return end
+    if event == "PLAYER_ENTERING_WORLD" then
+      if H.InitReminders then H.InitReminders() end
+      if H.UpdateReminders then H.UpdateReminders() end
+      if H.reminderFrame and HardcoreHUDDB.reminders.enabled then H.reminderFrame:Show() end
+    elseif event == "UNIT_AURA" then
+      local unit = ...
+      if unit == "player" then
+        if H.UpdateReminders then H.UpdateReminders() end
+      end
+    elseif event == "PLAYER_REGEN_DISABLED" then
+      -- In combat, re-evaluate missing buffs; keep frame visible if enabled
+      if H.UpdateReminders then H.UpdateReminders() end
+      if H.reminderFrame and HardcoreHUDDB.reminders.enabled then H.reminderFrame:Show() end
+    elseif event == "PLAYER_REGEN_ENABLED" then
+      -- Out of combat, refresh once; visibility managed by UpdateReminders
+      if H.UpdateReminders then H.UpdateReminders() end
+    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+      -- Older clients pass combat log args directly via ...
+      local timestamp, subEvent, hideCaster,
+            srcGUID, srcName, srcFlags, srcRaidFlags,
+            destGUID, destName, destFlags, destRaidFlags,
+            spellId = ...
+      if subEvent == "SPELL_AURA_REMOVED" and destGUID == UnitGUID("player") then
+        -- Refresh reminders immediately; if no icons are present, force a rebuild.
+        if H.UpdateReminders then H.UpdateReminders() end
+        local empty = false
+        if H.reminderFrame and H.reminderFrame.icons then
+          local count = #H.reminderFrame.icons
+          empty = (not count or count == 0)
+        end
+        if empty and H.InitReminders then
+          H.InitReminders()
+          if H.UpdateReminders then H.UpdateReminders() end
+        end
+        if H.reminderFrame and HardcoreHUDDB.reminders and HardcoreHUDDB.reminders.enabled then
+          H.reminderFrame:Show()
+        end
+      end
+    end
+  end)
+end
 
 -- First Aid bandages (Wrath 3.3.5)
 local BANDAGE_RANKS = {
@@ -1142,8 +1196,10 @@ function H.InitReminders()
     end)
   end
 
-  local function UpdateReminders()
+    local function UpdateReminders()
     if not HardcoreHUDDB.reminders.enabled then rf:Hide(); return end
+      -- Safety: keep frame hidden until we know we have entries
+      rf:Hide()
 
     -- Build actionable entries (items and self-buffs)
     local entries = {}
@@ -1362,6 +1418,10 @@ function H.InitReminders()
     -- Class self-buffs buttons (show only when missing and category enabled)
     local function AddSpellIfKnown(spellName)
       local name, _, tex = GetSpellInfo(spellName)
+      -- More reliable texture resolution: try GetSpellTexture when icon is nil
+      if not tex or tex == "" then
+        if GetSpellTexture then tex = GetSpellTexture(spellName) end
+      end
       if name then table.insert(entries, {kind="spell", spell=name, texture=tex, label=name}) end
     end
     -- From our ExpectedClassBuffs + core self-cast options
@@ -1500,7 +1560,7 @@ function H.InitReminders()
       b:SetPoint("TOPLEFT", rf, "TOPLEFT", 8 + col*(size+pad), -8 - row*(size+pad))
     end
 
-    local shown = 0
+      local shown = 0
     local function setItem(b, id, tex)
       b.kind = "item"; b.itemID = id; b.spell = nil; b.spellID=nil
       -- Resolve a reliable texture; avoid nil which renders as black
@@ -1525,6 +1585,7 @@ function H.InitReminders()
       if not resolvedTex or resolvedTex == "" then
         resolvedTex = "Interface/Icons/INV_Misc_QuestionMark"
       end
+      if not resolvedTex or resolvedTex == "" then resolvedTex = "Interface/Icons/INV_Misc_QuestionMark" end
       b.icon:SetTexture(resolvedTex)
       if not InCombatLockdown() then
         b:SetAttribute("type", "item"); b:SetAttribute("item", "item:"..tostring(id))
@@ -1536,7 +1597,14 @@ function H.InitReminders()
       -- Fallback to question mark if texture missing to avoid black icon
       local resolvedTex = tex
       if not resolvedTex or resolvedTex == "" then
-        resolvedTex = "Interface/Icons/INV_Misc_QuestionMark"
+        -- Try to resolve via GetSpellTexture by name
+        if GetSpellTexture and name then
+          local t = GetSpellTexture(name)
+          if t and t ~= "" then resolvedTex = t end
+        end
+        if not resolvedTex or resolvedTex == "" then
+          resolvedTex = "Interface/Icons/INV_Misc_QuestionMark"
+        end
       end
       b.icon:SetTexture(resolvedTex)
       if not InCombatLockdown() then
@@ -1925,8 +1993,14 @@ do
     if H.spikeFrame then
       if shown then H.spikeFrame:Show() else H.spikeFrame:Hide() end
     end
+    -- Do NOT force-show the reminder frame to avoid border flicker.
+    -- When re-showing HUD, let UpdateReminders decide visibility based on entries.
     if H.reminderFrame then
-      if shown and (HardcoreHUDDB.reminders and HardcoreHUDDB.reminders.enabled) then H.reminderFrame:Show() else H.reminderFrame:Hide() end
+      if not shown then
+        H.reminderFrame:Hide()
+      else
+        if H.UpdateReminders then H.UpdateReminders() end
+      end
     end
   end
   -- Initial evaluate to sync
