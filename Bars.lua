@@ -129,7 +129,8 @@ function H.BuildBars()
   -- Combo points centered between bars
   local combo = CreateFrame("Frame", nil, root)
   bars.combo = combo
-  combo:SetPoint("BOTTOM", root, "CENTER", 0, -40)
+  -- Raise combo bar to reduce overlap with utility buttons
+  combo:SetPoint("BOTTOM", root, "CENTER", 0, -20)
   combo:SetSize(w, 18)
   combo:SetFrameStrata("HIGH")
   combo:SetFrameLevel(root:GetFrameLevel()+20)
@@ -194,7 +195,8 @@ function H.BuildBars()
   bars.cdIcons = {}
   local spells = {}
   local class = select(2, UnitClass("player"))
-  if class == "ROGUE" then spells = { 1784, 5277 } -- Stealth, Evasion
+  -- Avoid duplicates: Rogue CDs are provided by Utilities.lua; skip here
+  if class == "ROGUE" then spells = { } -- handled by Utilities
   elseif class == "DRUID" then spells = { 1850, 22812 } -- Dash, Barkskin
   elseif class == "WARRIOR" then spells = { 871, 1719 } -- Shield Wall, Recklessness
   elseif class == "MAGE" then spells = { 45438, 120 } -- Ice Block, Cone of Cold placeholder
@@ -388,7 +390,7 @@ function H.UpdateHealth()
   if HardcoreHUDDB.warnings.criticalHP and UnitHealth("player")/UnitHealthMax("player") <= critThresh then
     H.ShowCriticalHPWarning()
   else
-    H.HideCriticalHPWarning()
+    if H.HideCriticalHPWarning then H.HideCriticalHPWarning() end
   end
   -- Target updates
   if UnitExists("target") then
@@ -444,8 +446,8 @@ function H.UpdateTarget()
   else
     for i=1,5 do bars.comboIcons[i]:Hide() end
   end
-  -- skull warning
-  H.CheckSkull()
+  -- skull warning (guard if Combat.lua not yet loaded)
+  if H.CheckSkull then H.CheckSkull() end
 
   -- target bars
   if UnitExists("target") and bars.targetHP and bars.targetPow then

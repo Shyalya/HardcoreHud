@@ -5,6 +5,10 @@ function H.BuildWarnings()
   local w = CreateFrame("Frame", nil, UIParent)
   H.warnHP = w
   w:SetSize(260, 60)
+  -- EMA smoothing state
+  local lossEMA = nil
+  local alphaFast = 0.5  -- fast response under spikes
+  local alphaSlow = 0.2  -- stable tracking under low damage
   w:SetPoint("CENTER", UIParent, "CENTER", 0, 140)
   w:SetFrameStrata("FULLSCREEN_DIALOG")
   local t = w:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -22,7 +26,6 @@ function H.BuildWarnings()
   local cit = ci:CreateTexture(nil, "ARTWORK")
   cit:SetAllPoints(ci)
   cit:SetTexture("Interface/Icons/INV_Potion_54")
-  ci:Hide()
 
   -- Skull indicator near target frame
   local skull = CreateFrame("Frame", nil, UIParent)
@@ -37,12 +40,10 @@ function H.BuildWarnings()
 
   -- Elite icons (Feign Death) shown with elite warning: 3 side-by-side
   H.eliteIcons = {}
-  -- Center the trio and add spacing above the text
-  local offsets = { -80, 0, 80 }
   for i=1,3 do
     local icon = CreateFrame("Frame", nil, UIParent)
-    icon:SetSize(72, 72)
-    icon:SetPoint("CENTER", UIParent, "CENTER", offsets[i], 230)
+    icon:SetSize(28, 28)
+    icon:SetPoint("CENTER", UIParent, "CENTER", -48 + (i-1)*48, 160)
     icon:SetFrameStrata("FULLSCREEN_DIALOG")
     local texI = icon:CreateTexture(nil, "ARTWORK")
     texI:SetAllPoints(icon)
@@ -69,20 +70,26 @@ function H.BuildWarnings()
   H.EliteAttentionText = eliteText
 
   -- Damage spike / Time-to-Death bar
-  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 10, warnThreshold = 3 }
-  local spike = CreateFrame("StatusBar", nil, UIParent)
+  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 30, warnThreshold = 3 }
+  -- Integrate TTD into the main HP bar to reduce clutter
+  local parentBar = (H.bars and H.bars.hp) or UIParent
+  local spike = CreateFrame("StatusBar", nil, parentBar)
   spike:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
-  spike:SetSize(140, 10)
+  -- Stretch across the HP bar width as a thin overlay at the top
+  spike:ClearAllPoints()
+  spike:SetPoint("TOPLEFT", parentBar, "TOPLEFT", 0, 0)
+  spike:SetPoint("TOPRIGHT", parentBar, "TOPRIGHT", 0, 0)
+  spike:SetHeight(6)
   spike:SetMinMaxValues(0, HardcoreHUDDB.spike.maxDisplay or 10)
   spike:SetValue(0)
-  spike:SetPoint("TOP", UIParent, "TOP", 0, -120)
-  spike:SetFrameStrata("FULLSCREEN_DIALOG")
+  -- Draw above the HP bar but below fullscreen dialogs
+  spike:SetFrameStrata("HIGH")
   spike:Hide()
   local sbg = spike:CreateTexture(nil, "BACKGROUND")
   sbg:SetAllPoints(spike)
   sbg:SetColorTexture(0,0,0,0.55)
   local stxt = spike:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  stxt:SetPoint("CENTER", spike, "CENTER")
+  stxt:SetPoint("BOTTOMRIGHT", spike, "TOPRIGHT", 0, 0)
   spike.text = stxt
   spike.pulseAcc = 0
   H.spikeFrame = spike
@@ -108,12 +115,8 @@ end
 function H.UpdateSpikeVisibility()
   local cfg = HardcoreHUDDB.spike
   if not (cfg and cfg.enabled) then if H.spikeFrame then H.spikeFrame:Hide() end return end
-  if cfg.alwaysShow then
-    if H.spikeFrame then H.spikeFrame:Show() end
-    return
-  end
-  -- Default behavior: only show when there are recent events
-  if H._spikeEvents and #H._spikeEvents > 0 then
+  -- Only show in combat per request
+  if H._inCombat then
     if H.spikeFrame then H.spikeFrame:Show() end
   else
     if H.spikeFrame then H.spikeFrame:Hide() end
@@ -195,49 +198,114 @@ local function PlayEliteSound()
 end
 
 -- Spike updater frame (separate lightweight OnUpdate)
-if not H._spikeDriver then
+-- Continuous Time-to-Death estimator using HP loss rate
+if not H._ttdDriver then
   local drv = CreateFrame("Frame")
-  H._spikeDriver = drv
+  H._ttdDriver = drv
   local accum = 0
+  local sampleAcc = 0
+  H._hpSamples = H._hpSamples or {}
   drv:SetScript("OnUpdate", function(_, dt)
     accum = accum + dt
-    if accum < 0.2 then return end
-    accum = 0
+    sampleAcc = sampleAcc + dt
     local cfg = HardcoreHUDDB.spike
     if not (cfg and cfg.enabled) then if H.spikeFrame then H.spikeFrame:Hide() end return end
-    if not H._spikeEvents or #H._spikeEvents == 0 then if H.spikeFrame then H.spikeFrame:Hide() end return end
+    -- Only operate while in combat; hide bar and skip when not
+    if not H._inCombat then
+      if H.spikeFrame then H.spikeFrame:Hide() end
+      return
+    end
+    -- Sample HP at ~10 Hz to build a moving window
+    if sampleAcc >= 0.1 then
+      sampleAcc = 0
+      local now = GetTime()
+      local hp = UnitHealth("player") or 0
+      table.insert(H._hpSamples, {t=now, hp=hp})
+      -- trim to window
+      local win = cfg.window or 5
+      local cutoff = now - win
+      local newIdx = 1
+      for i=1,#H._hpSamples do
+        if H._hpSamples[i].t >= cutoff then H._hpSamples[newIdx] = H._hpSamples[i]; newIdx = newIdx + 1 end
+      end
+      for i=newIdx,#H._hpSamples do H._hpSamples[i] = nil end
+    end
+
+    if accum < 0.2 then return end
+    accum = 0
+    if not H.spikeFrame then return end
+    -- Compute average HP loss per second over window (ignore gains)
+    local samples = H._hpSamples
+    if not samples or #samples < 2 then H.spikeFrame:Show(); H.spikeFrame:SetValue(0); H.spikeFrame.text:SetText("TTD: --") return end
+    local loss = 0
+    for i=2,#samples do
+      local delta = samples[i-1].hp - samples[i].hp
+      if delta > 0 then loss = loss + delta end
+    end
     local win = cfg.window or 5
-    local now = GetTime()
-    local cutoff = now - win
-    local total = 0
-    for _,ev in ipairs(H._spikeEvents) do if ev.t >= cutoff then total = total + ev.a end end
-    if total <= 0 then H.spikeFrame:Hide(); return end
-    local dps = total / win
+    local dps = loss / win
     local curHP = UnitHealth("player") or 0
-    local ttd = dps > 0 and (curHP / dps) or cfg.maxDisplay or 10
+    local ttd
+    if dps > 1e-3 then
+      ttd = curHP / dps
+    else
+      ttd = (cfg.maxDisplay or 10)
+    end
     local maxDisp = cfg.maxDisplay or 10
-    if ttd > maxDisp then ttd = maxDisp end
+    local ttdUncapped = ttd
+    local displayVal = ttdUncapped
+    if displayVal > maxDisp then displayVal = maxDisp end
     local f = H.spikeFrame
     f:SetMinMaxValues(0, maxDisp)
-    f:SetValue(ttd)
+    f:SetValue(displayVal)
     -- Color: green >8, yellow >5, orange >3, red <=3
     local r,g,b
-    if ttd > 8 then r,g,b = 0,1,0
-    elseif ttd > 5 then r,g,b = 1,1,0
-    elseif ttd > (cfg.warnThreshold or 3) then r,g,b = 1,0.5,0
+    if ttdUncapped > 8 then r,g,b = 0,1,0
+    elseif ttdUncapped > 5 then r,g,b = 1,1,0
+    elseif ttdUncapped > (cfg.warnThreshold or 3) then r,g,b = 1,0.5,0
     else r,g,b = 1,0.15,0 end
     f:SetStatusBarColor(r,g,b)
-    f.text:SetText(string.format("TTD: %.1fs", ttd))
+    local text = string.format("TTD: %.1fs", ttdUncapped)
+    if ttdUncapped > maxDisp then text = text .. "+" end
+    f.text:SetText(text)
     f:Show()
     -- Pulse when critical (<= warnThreshold)
-    if ttd <= (cfg.warnThreshold or 3) then
-      f.pulseAcc = f.pulseAcc + dt
+    if ttdUncapped <= (cfg.warnThreshold or 3) then
+      f.pulseAcc = f.pulseAcc + 0.2
       local alpha = 0.55 + 0.45 * math.abs(math.sin(f.pulseAcc*6))
       f:SetAlpha(alpha)
     else
       f.pulseAcc = 0
       f:SetAlpha(1)
     end
+  end)
+end
+
+-- Track player combat state to control TTD visibility and sampling
+if not H._combatWatcher then
+  local cw = CreateFrame("Frame")
+  H._combatWatcher = cw
+  cw:RegisterEvent("PLAYER_ENTERING_WORLD")
+  cw:RegisterEvent("PLAYER_REGEN_DISABLED")
+  cw:RegisterEvent("PLAYER_REGEN_ENABLED")
+  cw:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_ENTERING_WORLD" then
+      H._inCombat = UnitAffectingCombat and UnitAffectingCombat("player") or false
+    elseif event == "PLAYER_REGEN_DISABLED" then
+      H._inCombat = true
+      -- Fresh window at combat start so motion begins promptly
+      H._hpSamples = {}
+    elseif event == "PLAYER_REGEN_ENABLED" then
+      H._inCombat = false
+      -- Clear samples and hide bar when leaving combat
+      H._hpSamples = {}
+      if H.spikeFrame then
+        H.spikeFrame:SetValue(0)
+        H.spikeFrame.text:SetText("TTD: --")
+        H.spikeFrame:Hide()
+      end
+    end
+    if H.UpdateSpikeVisibility then H.UpdateSpikeVisibility() end
   end)
 end
 
@@ -277,19 +345,21 @@ end
 
 -- Simulate Time-to-Death bar activity for testing
 function H.TriggerTTDTest()
-  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 10, warnThreshold = 3 }
+  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 30, warnThreshold = 3 }
   HardcoreHUDDB.spike.enabled = true
-  H._spikeEvents = {}
+  -- Populate synthetic HP samples that decrease over the configured window
   local now = GetTime()
-  -- Simulate incoming damage over the window to produce a TTD value
   local win = HardcoreHUDDB.spike.window or 5
-  local samples = 10
-  local per = win / samples
-  for i=0,samples do
-    table.insert(H._spikeEvents, { t = now - (i * per), a = 500 })
+  local steps = 10
+  local stepDt = win / steps
+  local cur = UnitHealth("player") or 3000
+  local dropPerStep = math.max(1, math.floor((cur * 0.05) / steps)) -- ~5% HP over window
+  H._hpSamples = {}
+  for i=steps,0,-1 do
+    table.insert(H._hpSamples, { t = now - (i * stepDt), hp = cur - (steps - i) * dropPerStep })
   end
   if H.spikeFrame then H.spikeFrame:Show() end
-  print("HardcoreHUD: TTD test triggered")
+  print("HardcoreHUD: TTD test (synthetic samples) triggered")
 end
 
 function H.CheckSkull()

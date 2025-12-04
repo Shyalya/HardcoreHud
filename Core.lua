@@ -68,7 +68,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
   elseif event == "PLAYER_TARGET_CHANGED" or event == "UNIT_COMBO_POINTS" then
     H.UpdateTarget()
   elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-    H.OnCombatLog(...)
+    if H.OnCombatLog then H.OnCombatLog(...) end
   elseif event == "UNIT_TARGET" then
     local unit = ...
     if H.OnUnitTarget then H.OnUnitTarget(unit) end
@@ -80,7 +80,21 @@ end)
 
 function H.Init()
   H.BuildBars()
-  H.BuildWarnings()
+  if H.BuildWarnings then
+    H.BuildWarnings()
+  else
+    -- Defer a few frames in case Combat.lua loaded late due to client caching
+    local triesW = 0
+    local defW = CreateFrame("Frame")
+    defW:SetScript("OnUpdate", function(self)
+      triesW = triesW + 1
+      if H.BuildWarnings then H.BuildWarnings(); self:SetScript("OnUpdate", nil); return end
+      if triesW > 10 then
+        print("HardcoreHUD: BuildWarnings missing; skipping warnings build")
+        self:SetScript("OnUpdate", nil)
+      end
+    end)
+  end
   if H.BuildUtilities then
     H.BuildUtilities()
   else

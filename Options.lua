@@ -85,6 +85,7 @@ function H.BuildOptions()
   local sep = CreateFrame("Slider", "HardcoreHUDSeparationSlider", f, "OptionsSliderTemplate")
   sep:ClearAllPoints()
   sep:SetPoint("TOPLEFT", height, "BOTTOMLEFT", 0, -34)
+  sep:SetMinMaxValues(80, 240)
   sep:SetValueStep(10)
   sep:SetValue(HardcoreHUDDB.layout and HardcoreHUDDB.layout.separation or 140)
   if _G[sep:GetName().."Low"] then _G[sep:GetName().."Low"]:SetText("80") end
@@ -187,27 +188,7 @@ function H.BuildOptions()
     print("HardcoreHUD: Multi-aggro threshold = "..HardcoreHUDDB.warnings.multiAggroThreshold)
   end)
 
-  -- 5-second rule overlay opacity (left column)
-  HardcoreHUDDB.ticker = HardcoreHUDDB.ticker or { enabled = true }
-  if HardcoreHUDDB.ticker.fsOpacity == nil then HardcoreHUDDB.ticker.fsOpacity = 0.25 end
-  local fsOpacity = CreateFrame("Slider", "HardcoreHUDFiveSecOpacity", f, "OptionsSliderTemplate")
-  fsOpacity:ClearAllPoints()
-  fsOpacity:SetPoint("TOPLEFT", spikeWarn, "BOTTOMLEFT", 0, -34)
-  fsOpacity:SetMinMaxValues(0.05, 0.80)
-  fsOpacity:SetValueStep(0.05)
-  fsOpacity:SetValue(HardcoreHUDDB.ticker.fsOpacity)
-  if _G[fsOpacity:GetName().."Low"] then _G[fsOpacity:GetName().."Low"]:SetText("5%") end
-  if _G[fsOpacity:GetName().."High"] then _G[fsOpacity:GetName().."High"]:SetText("80%") end
-  if _G[fsOpacity:GetName().."Text"] then _G[fsOpacity:GetName().."Text"]:SetText("5s Overlay Opacity") end
-  fsOpacity:SetScript("OnValueChanged", function(self,val)
-    val = tonumber(string.format("%.2f", val))
-    HardcoreHUDDB.ticker.fsOpacity = val
-    if H.bars and H.bars.fsFill and HardcoreHUDDB.colors and HardcoreHUDDB.colors.fiveSec then
-      local r,g,b = HardcoreHUDDB.colors.fiveSec[1], HardcoreHUDDB.colors.fiveSec[2], HardcoreHUDDB.colors.fiveSec[3]
-      H.bars.fsFill:SetColorTexture(r,g,b,val)
-      if H.bars.fsFill.SetBlendMode then H.bars.fsFill:SetBlendMode("ADD") end
-    end
-  end)
+  -- (moved Five-second rule opacity slider below TTD sliders to avoid nil anchor)
 
   local lock = CreateFrame("CheckButton", "HardcoreHUDLock", f, "InterfaceOptionsCheckButtonTemplate")
   lock:ClearAllPoints()
@@ -364,22 +345,7 @@ end
   end)
   testMulti:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-  local testTTD = CreateFrame("Button", nil, rightCol, "UIPanelButtonTemplate")
-  testTTD:ClearAllPoints()
-  testTTD:SetPoint("TOPLEFT", testMulti, "BOTTOMLEFT", 0, -10)
-  testTTD:SetSize(150, 24)
-  testTTD:SetText("Test TTD Bar")
-  testTTD:SetFrameStrata("FULLSCREEN_DIALOG")
-  testTTD:SetFrameLevel(rightCol:GetFrameLevel()+1)
-  testTTD:SetScript("OnClick", function()
-    if H.TriggerTTDTest then H.TriggerTTDTest() else print("HardcoreHUD: TriggerTTDTest missing") end
-  end)
-  testTTD:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText("Simulate damage; show TTD bar")
-    GameTooltip:Show()
-  end)
-  testTTD:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  -- Removed Test TTD Bar button; TTD is always enabled and visible in combat
 
   -- Buff/Consumable reminder toggle
   local remind = CreateFrame("CheckButton", "HardcoreHUDBuffRemind", f, "OptionsCheckButtonTemplate")
@@ -460,75 +426,37 @@ end
     close:SetText("Close")
   close:SetScript("OnClick", function() f:Hide() end)
 
-  -- Spike / Time-to-Death toggle & window slider (below emergency slider)
-  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 10, warnThreshold = 3 }
-  local spikeEnable = CreateFrame("CheckButton", "HardcoreHUDSpikeEnable", f, "OptionsCheckButtonTemplate")
-  spikeEnable:ClearAllPoints()
-  spikeEnable:SetPoint("TOPLEFT", emEnable, "BOTTOMLEFT", 0, -28)
-  spikeEnable:SetChecked(HardcoreHUDDB.spike.enabled)
-  if _G[spikeEnable:GetName().."Text"] then _G[spikeEnable:GetName().."Text"]:SetText("TTD Balken aktiv") end
-    if _G[spikeEnable:GetName().."Text"] then _G[spikeEnable:GetName().."Text"]:SetText("Time-to-Death Bar") end
-  spikeEnable:SetScript("OnClick", function(self)
-    HardcoreHUDDB.spike.enabled = self:GetChecked()
-    print("HardcoreHUD: TTD bar "..(HardcoreHUDDB.spike.enabled and "ON" or "OFF"))
-    if H.spikeFrame and not HardcoreHUDDB.spike.enabled then H.spikeFrame:Hide() end
-    if H.spikeFrame and HardcoreHUDDB.spike.enabled and (HardcoreHUDDB.spike.alwaysShow == true) then H.spikeFrame:Show() end
-    if H.UpdateSpikeVisibility then H.UpdateSpikeVisibility() end
-  end)
+  -- TTD configuration removed from options; use fixed defaults
+  HardcoreHUDDB.spike = HardcoreHUDDB.spike or {}
+  HardcoreHUDDB.spike.enabled = true
+  HardcoreHUDDB.spike.window = 5
+  HardcoreHUDDB.spike.warnThreshold = 3
+  HardcoreHUDDB.spike.maxDisplay = 30
 
-  local spikeWin = CreateFrame("Slider", "HardcoreHUDSpikeWindowSlider", f, "OptionsSliderTemplate")
-  spikeWin:ClearAllPoints()
-  spikeWin:ClearAllPoints()
-  spikeWin:SetPoint("TOPLEFT", emHP, "BOTTOMLEFT", 0, -34)
-  spikeWin:SetMinMaxValues(2,10)
-  spikeWin:SetValueStep(1)
-  spikeWin:SetValue(HardcoreHUDDB.spike.window or 5)
-  if _G[spikeWin:GetName().."Low"] then _G[spikeWin:GetName().."Low"]:SetText("2s") end
-  if _G[spikeWin:GetName().."High"] then _G[spikeWin:GetName().."High"]:SetText("10s") end
-  if _G[spikeWin:GetName().."Text"] then _G[spikeWin:GetName().."Text"]:SetText("Schadensfenster") end
-    if _G[spikeWin:GetName().."Text"] then _G[spikeWin:GetName().."Text"]:SetText("Damage Window") end
-  spikeWin:SetScript("OnValueChanged", function(self,val)
-    HardcoreHUDDB.spike.window = math.floor(val+0.5)
-    print("HardcoreHUD: spike window="..HardcoreHUDDB.spike.window.."s")
-  end)
-
-  local spikeWarn = CreateFrame("Slider", "HardcoreHUDSpikeWarnSlider", f, "OptionsSliderTemplate")
-  spikeWarn:ClearAllPoints()
-  spikeWarn:SetPoint("TOPLEFT", spikeWin, "BOTTOMLEFT", 0, -34)
-  spikeWarn:SetMinMaxValues(1,6)
-  spikeWarn:SetValueStep(0.5)
-  if spikeWarn.SetObeyStepOnDrag then spikeWarn:SetObeyStepOnDrag(true) end
-  spikeWarn:SetValue(HardcoreHUDDB.spike.warnThreshold or 3)
-  if _G[spikeWarn:GetName().."Low"] then _G[spikeWarn:GetName().."Low"]:SetText("1s") end
-  if _G[spikeWarn:GetName().."High"] then _G[spikeWarn:GetName().."High"]:SetText("6s") end
-  if _G[spikeWarn:GetName().."Text"] then _G[spikeWarn:GetName().."Text"]:SetText("Warnung TTD") end
-    if _G[spikeWarn:GetName().."Text"] then _G[spikeWarn:GetName().."Text"]:SetText("Warn Threshold TTD") end
-  spikeWarn:SetScript("OnValueChanged", function(self,val)
-    val = tonumber(string.format("%.1f", val))
-    HardcoreHUDDB.spike.warnThreshold = val
-    print("HardcoreHUD: spike warnThreshold="..val.."s")
-  end)
-
-  -- Always show TTD bar toggle
-  HardcoreHUDDB.spike.alwaysShow = HardcoreHUDDB.spike.alwaysShow or false
-  local spikeAlways = CreateFrame("CheckButton", "HardcoreHUDSpikeAlwaysShow", f, "OptionsCheckButtonTemplate")
-  spikeAlways:ClearAllPoints()
-  spikeAlways:SetPoint("TOPLEFT", spikeWarn, "BOTTOMLEFT", 0, -18)
-  spikeAlways:SetChecked(HardcoreHUDDB.spike.alwaysShow)
-  if _G[spikeAlways:GetName().."Text"] then _G[spikeAlways:GetName().."Text"]:SetText("TTD immer anzeigen") end
-    if _G[spikeAlways:GetName().."Text"] then _G[spikeAlways:GetName().."Text"]:SetText("Always Show TTD Bar") end
-  spikeAlways:SetScript("OnClick", function(self)
-    HardcoreHUDDB.spike.alwaysShow = self:GetChecked()
-    print("HardcoreHUD: TTD alwaysShow="..(HardcoreHUDDB.spike.alwaysShow and "ON" or "OFF"))
-    if H.spikeFrame then
-      if HardcoreHUDDB.spike.enabled and HardcoreHUDDB.spike.alwaysShow then
-        H.spikeFrame:Show()
-      else
-        -- Defer to normal visibility rules when not forced
-        if H.UpdateSpikeVisibility then H.UpdateSpikeVisibility() end
-      end
+  -- 5-second rule overlay opacity (left column, placed after TTD sliders)
+  HardcoreHUDDB.ticker = HardcoreHUDDB.ticker or { enabled = true }
+  if HardcoreHUDDB.ticker.fsOpacity == nil then HardcoreHUDDB.ticker.fsOpacity = 0.25 end
+  local fsOpacity = CreateFrame("Slider", "HardcoreHUDFiveSecOpacity", f, "OptionsSliderTemplate")
+  fsOpacity:ClearAllPoints()
+  -- With TTD sliders removed, anchor fsOpacity under emHP
+  fsOpacity:SetPoint("TOPLEFT", emHP, "BOTTOMLEFT", 0, -68)
+  fsOpacity:SetMinMaxValues(0.05, 0.80)
+  fsOpacity:SetValueStep(0.05)
+  fsOpacity:SetValue(HardcoreHUDDB.ticker.fsOpacity)
+  if _G[fsOpacity:GetName().."Low"] then _G[fsOpacity:GetName().."Low"]:SetText("5%") end
+  if _G[fsOpacity:GetName().."High"] then _G[fsOpacity:GetName().."High"]:SetText("80%") end
+  if _G[fsOpacity:GetName().."Text"] then _G[fsOpacity:GetName().."Text"]:SetText("5s Overlay Opacity") end
+  fsOpacity:SetScript("OnValueChanged", function(self,val)
+    val = tonumber(string.format("%.2f", val))
+    HardcoreHUDDB.ticker.fsOpacity = val
+    if H.bars and H.bars.fsFill and HardcoreHUDDB.colors and HardcoreHUDDB.colors.fiveSec then
+      local r,g,b = HardcoreHUDDB.colors.fiveSec[1], HardcoreHUDDB.colors.fiveSec[2], HardcoreHUDDB.colors.fiveSec[3]
+      H.bars.fsFill:SetColorTexture(r,g,b,val)
+      if H.bars.fsFill.SetBlendMode then H.bars.fsFill:SetBlendMode("ADD") end
     end
   end)
+
+  -- Remove "Always Show TTD" option; TTD shows in combat by design
 
   -- Minimap button to open options (created in Core.Init for reliability)
 

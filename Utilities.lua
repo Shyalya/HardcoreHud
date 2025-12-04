@@ -101,10 +101,10 @@ function H.BuildUtilities()
   -- Potion count and click-to-use
   local p = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.potionBtn = p
+  -- Place utilities below the combo bar, above the cooldown bar
   if H.bars and H.bars.combo then
     p:ClearAllPoints()
-    -- Place above class cooldown buttons: attach to combo bar top
-    p:SetPoint("TOP", H.bars.combo, "TOP", -20, -8)
+    p:SetPoint("TOP", H.bars.combo, "BOTTOM", -20, -8)
   elseif H.bars and H.bars.pow then
     p:ClearAllPoints()
     p:SetPoint("TOP", H.bars.pow, "BOTTOM", -20, -8)
@@ -148,7 +148,7 @@ function H.BuildUtilities()
   H.bandageBtn = bdg
   if H.bars and H.bars.combo then
     bdg:ClearAllPoints()
-    bdg:SetPoint("TOP", H.bars.combo, "TOP", -52, -8)
+    bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -52, -8)
   elseif H.bars and H.bars.pow then
     bdg:ClearAllPoints()
     bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -52, -8)
@@ -184,8 +184,7 @@ function H.BuildUtilities()
   H.hearthBtn = hs
   if H.bars and H.bars.combo then
     hs:ClearAllPoints()
-    -- Place above class cooldown buttons: attach to combo bar top
-    hs:SetPoint("TOP", H.bars.combo, "TOP", 20, -8)
+    hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 20, -8)
   elseif H.bars and H.bars.pow then
     hs:ClearAllPoints()
     hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 20, -8)
@@ -1504,7 +1503,29 @@ function H.InitReminders()
     local shown = 0
     local function setItem(b, id, tex)
       b.kind = "item"; b.itemID = id; b.spell = nil; b.spellID=nil
-      b.icon:SetTexture(tex or (GetItemIcon and GetItemIcon(id)))
+      -- Resolve a reliable texture; avoid nil which renders as black
+      local resolvedTex = tex
+      if not resolvedTex or resolvedTex == "" then
+        resolvedTex = (GetItemIcon and GetItemIcon(id))
+      end
+      if not resolvedTex or resolvedTex == "" then
+        -- Try bag scan to fetch texture when item cache isn't ready
+        for bag=0,4 do
+          local slots = GetContainerNumSlots(bag) or 0
+          for slot=1,slots do
+            local iid = GetContainerItemID(bag, slot)
+            if iid == id then
+              local _, _, tex2 = GetContainerItemInfo(bag, slot)
+              if tex2 and tex2 ~= "" then resolvedTex = tex2; break end
+            end
+          end
+          if resolvedTex then break end
+        end
+      end
+      if not resolvedTex or resolvedTex == "" then
+        resolvedTex = "Interface/Icons/INV_Misc_QuestionMark"
+      end
+      b.icon:SetTexture(resolvedTex)
       if not InCombatLockdown() then
         b:SetAttribute("type", "item"); b:SetAttribute("item", "item:"..tostring(id))
       end
@@ -1512,7 +1533,12 @@ function H.InitReminders()
     end
     local function setSpell(b, name, tex)
       b.kind = "spell"; b.itemID = nil; b.spell = name
-      b.icon:SetTexture(tex)
+      -- Fallback to question mark if texture missing to avoid black icon
+      local resolvedTex = tex
+      if not resolvedTex or resolvedTex == "" then
+        resolvedTex = "Interface/Icons/INV_Misc_QuestionMark"
+      end
+      b.icon:SetTexture(resolvedTex)
       if not InCombatLockdown() then
         b:SetAttribute("type", "spell"); b:SetAttribute("spell", name)
       end
