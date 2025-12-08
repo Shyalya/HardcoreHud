@@ -1,7 +1,7 @@
 local H = HardcoreHUD
 
 -- Simple Vanilla zones level ranges (not exhaustive, representative sample)
-local zones = {
+local allZones = {
   { name = "Dun Morogh", range = "1-10" },
   { name = "Elwynn Forest", range = "1-10" },
   { name = "Tirisfal Glades", range = "1-10" },
@@ -39,6 +39,32 @@ local zones = {
   { name = "Winterspring", range = "55-60" },
 }
 
+local function parseRange(rangeStr)
+  local a, b = string.match(rangeStr or "", "^(%d+)%-(%d+)$")
+  if not a or not b then return nil, nil end
+  return tonumber(a), tonumber(b)
+end
+
+local function zoneIntersectsLevelWindow(zoneRange, playerLevel)
+  if not playerLevel then return false end
+  local zmin, zmax = parseRange(zoneRange)
+  if not zmin or not zmax then return false end
+  local wmin = math.max(1, playerLevel - 3)
+  local wmax = playerLevel + 3
+  return not (zmax < wmin or zmin > wmax)
+end
+
+local function getFilteredZones()
+  local level = UnitLevel("player")
+  local filtered = {}
+  for i, z in ipairs(allZones) do
+    if zoneIntersectsLevelWindow(z.range, level) then
+      table.insert(filtered, z)
+    end
+  end
+  return filtered, level
+end
+
 local function buildWindow()
   if H.zonesFrame then return end
   local f = CreateFrame("Frame", "HardcoreHUDZones", UIParent)
@@ -58,16 +84,75 @@ local function buildWindow()
   scroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -30, 14)
 
   local content = CreateFrame("Frame", nil, scroll)
-  content:SetSize(300, #zones * 20 + 20)
+  content:SetSize(300, 200)
   scroll:SetScrollChild(content)
 
-  local y = -4
-  for i, z in ipairs(zones) do
-    local line = content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    line:SetPoint("TOPLEFT", content, "TOPLEFT", 4, y)
-    line:SetText(string.format("%s  |  %s", z.name, z.range))
-    y = y - 20
+  f._zonesContent = content
+  f._zonesTitle = title
+
+  local function refresh()
+    local filtered, level = getFilteredZones()
+    -- Clear previous rows if present
+    if f._zoneRows then
+      for _, row in ipairs(f._zoneRows) do
+        row:Hide()
+        row:SetScript("OnEnter", nil)
+        row:SetScript("OnLeave", nil)
+      end
+    end
+    f._zoneRows = {}
+    -- Rebuild list
+    local count = #filtered
+    f._zonesContent:SetSize(300, count * 22 + 20)
+    f._zonesTitle:SetText(string.format("Zones Near Your Level (%d)", level or 0))
+    local y = -4
+    -- Instances near zones (Vanilla brackets)
+    local zoneInstances = {
+      ["Durotar"] = { {name="Ragefire Chasm", range="13-18"} },
+      ["Barrens"] = { {name="Wailing Caverns", range="17-24"}, {name="Razorfen Kraul", range="23-30"} },
+      ["Westfall"] = { {name="Deadmines", range="17-26"} },
+      ["Silverpine Forest"] = { {name="Shadowfang Keep", range="22-30"} },
+      ["Stonetalon Mountains"] = { {name="Blackfathom Deeps", range="20-30"} },
+      ["Badlands"] = { {name="Uldaman", range="35-45"} },
+      ["Desolace"] = { {name="Maraudon", range="45-52"} },
+      ["Swamp of Sorrows"] = { {name="Sunken Temple", range="50-54"} },
+      ["Searing Gorge"] = { {name="Blackrock Depths", range="52-60"} },
+      ["Burning Steppes"] = { {name="Blackrock Spire", range="55-60"} },
+      ["Stranglethorn Vale"] = { {name="Zul'Farrak", range="44-54"} },
+      ["Feralas"] = { {name="Dire Maul", range="55-60"} },
+      ["Western Plaguelands"] = { {name="Stratholme", range="58-60"} },
+      ["Eastern Plaguelands"] = { {name="Scholomance", range="58-60"} },
+    }
+    for i, z in ipairs(filtered) do
+      -- Create a clickable/hoverable row button
+      local row = CreateFrame("Button", nil, f._zonesContent)
+      row:SetPoint("TOPLEFT", f._zonesContent, "TOPLEFT", 2, y)
+      row:SetSize(280, 20)
+      -- Text inside the row
+      local txt = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      txt:SetPoint("LEFT", row, "LEFT", 2, 0)
+      txt:SetText(string.format("%s  |  %s", z.name, z.range))
+      row.text = txt
+      -- Tooltip on hover: show nearby instances and level brackets
+      row:EnableMouse(true)
+      row:SetScript("OnEnter", function(self)
+        local inst = zoneInstances[z.name]
+        if not inst or #inst == 0 then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine("Nearby Instances", 1, 0.92, 0.2)
+        for _, info in ipairs(inst) do
+          GameTooltip:AddLine(string.format("%s  (%s)", info.name, info.range), 0.9, 0.9, 0.9)
+        end
+        GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      table.insert(f._zoneRows, row)
+      y = y - 22
+    end
   end
+
+  f._refreshZones = refresh
 
   local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   close:SetPoint("BOTTOM", f, "BOTTOM", 0, 10)
@@ -78,5 +163,6 @@ end
 
 function H.ShowZonesWindow()
   buildWindow()
+  if H.zonesFrame._refreshZones then H.zonesFrame._refreshZones() end
   if H.zonesFrame:IsShown() then H.zonesFrame:Hide() else H.zonesFrame:Show() end
 end

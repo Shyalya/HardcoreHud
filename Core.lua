@@ -1,6 +1,8 @@
 local addonName = ...
 HardcoreHUD = HardcoreHUD or {}
 local H = HardcoreHUD
+-- Ensure SavedVariables table exists as early as possible
+HardcoreHUDDB = HardcoreHUDDB or {}
 -- Target Cast Bar implementation
 function H.InitTargetCastBar()
   H.cast = H.cast or {}
@@ -51,6 +53,46 @@ function H.InitTargetCastBar()
   H.cast._timer = 0
   H.cast._endTime = 0
   H.cast._channel = false
+
+  -- Interrupt tracker visuals: red pulsing overlay over the cast area
+  local glow = bar:CreateTexture(nil, "OVERLAY")
+  glow:SetAllPoints(bar)
+  glow:SetColorTexture(1, 0.2, 0.2, 0) -- start hidden
+  H.cast.interruptGlow = glow
+  H.cast._intrPulse = { t = 0, speed = 3.0, minA = 0.15, maxA = 0.45, active = false }
+  -- Update pulsing if active
+  bar:HookScript("OnUpdate", function(_, elapsed)
+    local p = H.cast and H.cast._intrPulse
+    if p and p.active and H.cast and H.cast.interruptGlow then
+      p.t = (p.t + elapsed * p.speed) % (2*math.pi)
+      local a = p.minA + (p.maxA - p.minA) * (0.5 + 0.5 * math.sin(p.t))
+      H.cast.interruptGlow:SetColorTexture(1, 0.2, 0.2, a)
+    end
+  end)
+
+  -- Secure interrupt button (optional): attempts to cast your interrupt
+  local btn
+  if CreateFrame then
+    btn = CreateFrame("Button", "HardcoreHUDInterruptButton", bar, "SecureActionButtonTemplate, UIPanelButtonTemplate")
+    btn:SetSize(22, 22)
+    btn:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 10, 10)
+    btn:RegisterForClicks("AnyUp")
+    btn:SetAlpha(0) -- hidden by default; fade in when active
+    local icon = btn:CreateTexture(nil, "ARTWORK")
+    icon:SetAllPoints(btn)
+    icon:SetTexture("Interface/Icons/Ability_Kick")
+    btn.icon = icon
+    H.cast.interruptButton = btn
+    H.cast._btnPulse = { t = 0, speed = 6.0 }
+    btn:SetScript("OnUpdate", function(self, elapsed)
+      if not self:IsShown() then return end
+      local s = H.cast and H.cast._btnPulse
+      if not s then return end
+      s.t = (s.t + elapsed * s.speed) % (2*math.pi)
+      local a = 0.5 + 0.5 * math.abs(math.sin(s.t))
+      self:SetAlpha(a)
+    end)
+  end
 end
 
 function H.UpdateTargetCastBarVisibility()
@@ -62,7 +104,7 @@ function H.UpdateTargetCastBarVisibility()
   end
 end
 
-local function setCastProgress(startMS, endMS, isChannel)
+local function setCastProgress(startMS, endMS, isChannel, notInterruptible)
   if not H.cast or not H.cast.targetBar then return end
   H.cast._channel = isChannel or false
   H.cast._startTime = startMS / 1000
@@ -102,8 +144,14 @@ local function setCastProgress(startMS, endMS, isChannel)
       H.cast.spark:SetPoint("CENTER", self, "TOP", 0, 0)
       self:SetScript("OnUpdate", nil)
       self:Hide()
+      -- stop interrupt highlight
+      if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+      if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+      if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
     end
   end)
+  -- Evaluate interrupt state for this cast
+  if H.EvaluateInterruptState then H.EvaluateInterruptState(notInterruptible) end
 end
 
 function H.HandleTargetCastEvent(event, unit)
@@ -111,33 +159,51 @@ function H.HandleTargetCastEvent(event, unit)
   if not HardcoreHUDDB or not HardcoreHUDDB.castbar or not HardcoreHUDDB.castbar.enabled then return end
   if not H.cast or not H.cast.targetBar then H.InitTargetCastBar() end
   if event == "UNIT_SPELLCAST_START" then
-    local name, _, _, _, startTimeMS, endTimeMS = UnitCastingInfo("target")
+    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitCastingInfo("target")
     if name and startTimeMS and endTimeMS then
       H.cast.spell:SetText(name)
-      setCastProgress(startTimeMS, endTimeMS, false)
+      H.cast._spellName = name
+      setCastProgress(startTimeMS, endTimeMS, false, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
     if H.cast and H.cast.targetBar then H.cast.targetBar:SetScript("OnUpdate", nil); H.cast.targetBar:Hide() end
+    if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+    if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+    -- Audio cues: cast finished / interrupted
+    if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled then
+      if event == "UNIT_SPELLCAST_STOP" and HardcoreHUDDB.audio.castFinish then
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/MapPing.wav") end
+      elseif (event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED") and HardcoreHUDDB.audio.castInterrupted then
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/Ignored_Alert.wav") end
+      end
+    end
   elseif event == "UNIT_SPELLCAST_DELAYED" then
-    local name, _, _, _, startTimeMS, endTimeMS = UnitCastingInfo("target")
+    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitCastingInfo("target")
     if name and startTimeMS and endTimeMS then
       H.cast.spell:SetText(name)
-      setCastProgress(startTimeMS, endTimeMS, false)
+      H.cast._spellName = name
+      setCastProgress(startTimeMS, endTimeMS, false, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_CHANNEL_START" then
-    local name, _, _, _, startTimeMS, endTimeMS = UnitChannelInfo("target")
+    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitChannelInfo("target")
     if name and startTimeMS and endTimeMS then
       H.cast.spell:SetText(name)
-      setCastProgress(startTimeMS, endTimeMS, true)
+      H.cast._spellName = name
+      setCastProgress(startTimeMS, endTimeMS, true, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
-    local name, _, _, _, startTimeMS, endTimeMS = UnitChannelInfo("target")
+    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitChannelInfo("target")
     if name and startTimeMS and endTimeMS then
       H.cast.spell:SetText(name)
-      setCastProgress(startTimeMS, endTimeMS, true)
+      H.cast._spellName = name
+      setCastProgress(startTimeMS, endTimeMS, true, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
     if H.cast and H.cast.targetBar then H.cast.targetBar:SetScript("OnUpdate", nil); H.cast.targetBar:Hide() end
+    if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+    if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
   end
 end
 
@@ -158,17 +224,24 @@ do
       if event == "PLAYER_TARGET_CHANGED" then
         -- Refresh state when target changes
         if HardcoreHUDDB and HardcoreHUDDB.castbar and HardcoreHUDDB.castbar.enabled then
-          local name, _, _, _, sMS, eMS = UnitCastingInfo("target")
-          if not name then name, _, _, _, sMS, eMS = UnitChannelInfo("target") end
+          local name, _, _, _, sMS, eMS, _, notInterruptible = UnitCastingInfo("target")
+          if not name then name, _, _, _, sMS, eMS, _, notInterruptible = UnitChannelInfo("target") end
           if name and sMS and eMS then
             if not H.cast or not H.cast.targetBar then H.InitTargetCastBar() end
             H.cast.spell:SetText(name)
-            setCastProgress(sMS, eMS, UnitChannelInfo("target") ~= nil)
+            H.cast._spellName = name
+            setCastProgress(sMS, eMS, UnitChannelInfo("target") ~= nil, notInterruptible)
           else
             if H.cast and H.cast.targetBar then H.cast.targetBar:SetScript("OnUpdate", nil); H.cast.targetBar:Hide() end
+            if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+            if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+            if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
           end
         else
           if H.cast and H.cast.targetBar then H.cast.targetBar:Hide() end
+          if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+          if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+          if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
         end
       else
         H.HandleTargetCastEvent(event, unit)
@@ -178,8 +251,192 @@ do
   end
 end
 
--- Ensure SavedVariables table exists before first access
-HardcoreHUDDB = HardcoreHUDDB or {}
+-- Interrupt capability detection and tracker
+HardcoreHUDDB.trackers = HardcoreHUDDB.trackers or { interruptEnabled = true, interruptSound = true, showInterruptButton = true, dispelEnabled = true, dispelSound = false }
+
+local function SpellKnown(spellId)
+  if IsSpellKnown then return IsSpellKnown(spellId) end
+  if IsPlayerSpell then return IsPlayerSpell(spellId) end
+  return true -- best-effort fallback
+end
+
+local InterruptCandidates = {
+  ROGUE   = { {id=1766,  icon="Interface/Icons/Ability_Kick",                 name=(GetSpellInfo and GetSpellInfo(1766)) or "Kick" } },
+  WARRIOR = { {id=6552,  icon="Interface/Icons/INV_Gauntlets_04",             name=(GetSpellInfo and GetSpellInfo(6552)) or "Pummel" } },
+  MAGE    = { {id=2139,  icon="Interface/Icons/Spell_Frost_IceShock",         name=(GetSpellInfo and GetSpellInfo(2139)) or "Counterspell" } },
+  SHAMAN  = { {id=57994, icon="Interface/Icons/Spell_Nature_Cyclone",         name=(GetSpellInfo and GetSpellInfo(57994)) or "Wind Shear" },
+              {id=8042,  icon="Interface/Icons/Spell_Nature_EarthShock",      name=(GetSpellInfo and GetSpellInfo(8042)) or "Earth Shock" } },
+  PALADIN = { {id=853,   icon="Interface/Icons/Spell_Holy_SealOfMight",       name=(GetSpellInfo and GetSpellInfo(853)) or "Hammer of Justice" } },
+  PRIEST  = { {id=15487, icon="Interface/Icons/Spell_Shadow_ImpPhaseShift",   name=(GetSpellInfo and GetSpellInfo(15487)) or "Silence" } },
+  WARLOCK = { {id=19647, icon="Interface/Icons/Spell_Shadow_MindRot",         name=(GetSpellInfo and GetSpellInfo(19647)) or "Spell Lock" } },
+  DRUID   = { {id=16979, icon="Interface/Icons/Ability_Hunter_Pet_Bear",      name=(GetSpellInfo and GetSpellInfo(16979)) or "Feral Charge" } },
+  HUNTER  = { },
+}
+
+local function ChooseInterrupt()
+  local _, class = UnitClass("player")
+  local list = InterruptCandidates[class or ""] or {}
+  for _, sp in ipairs(list) do
+    if SpellKnown(sp.id) then return sp end
+  end
+  return list[1] -- fallback, may not be known
+end
+
+function H.InitInterruptTracker()
+  H.cast = H.cast or {}
+  if not H.cast.targetBar then H.InitTargetCastBar() end
+  H.cast._lastInterruptToken = nil
+  -- Configure interrupt button spell/icon
+  local sp = ChooseInterrupt()
+  if H.cast.interruptButton and sp then
+    H.cast.interruptButton.icon:SetTexture(sp.icon)
+    H.cast.interruptButton:SetAttribute("type", "spell")
+    H.cast.interruptButton:SetAttribute("spell", sp.name or sp.id)
+  end
+end
+
+local function SpellReady(spellId)
+  if not GetSpellCooldown then return true end
+  local start, duration, enabled = GetSpellCooldown(spellId)
+  if not start or start == 0 then return true end
+  return (start + duration - GetTime()) <= 0
+end
+
+function H.EvaluateInterruptState(notInterruptible)
+  if not HardcoreHUDDB.trackers or not HardcoreHUDDB.trackers.interruptEnabled then
+    if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+    if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+    return
+  end
+  local active = true
+  if notInterruptible == true then active = false end
+  if not UnitExists("target") or not H.cast or not H.cast.targetBar:IsShown() then active = false end
+  if active then
+    if H.cast._intrPulse then H.cast._intrPulse.active = true end
+    -- Play sound once per cast token
+    if HardcoreHUDDB.trackers.interruptSound then
+      local token = (H.cast._spellName or "?") .. tostring(H.cast._endTime or 0)
+      if token ~= H.cast._lastInterruptToken then
+        H.cast._lastInterruptToken = token
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/RaidWarning.wav") end
+      end
+    end
+    -- Show button if configured and ready
+    if H.cast.interruptButton and (HardcoreHUDDB.trackers.showInterruptButton ~= false) then
+      local sp = ChooseInterrupt()
+      if sp then
+        H.cast.interruptButton.icon:SetTexture(sp.icon)
+        H.cast.interruptButton:SetAttribute("spell", sp.name or sp.id)
+        -- only show if spell is likely known/ready
+        if SpellKnown(sp.id) and SpellReady(sp.id) then
+          H.cast.interruptButton:Show()
+        else
+          H.cast.interruptButton:Hide()
+        end
+      else
+        H.cast.interruptButton:Hide()
+      end
+    end
+  else
+    if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
+    if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
+    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+  end
+end
+
+-- Dispel highlight on player when a dispellable debuff is present
+local DispelByClass = {
+  PALADIN = { Magic=true, Poison=true, Disease=true },
+  PRIEST  = { Magic=true, Disease=true },
+  SHAMAN  = { Poison=true, Disease=true },
+  DRUID   = { Curse=true, Poison=true },
+  MAGE    = { Curse=true },
+  WARLOCK = { Magic=true }, -- via pet; best-effort
+}
+
+function H.InitDispelHighlight()
+  H.dispel = H.dispel or {}
+  if H.dispel.frame then return end
+  local anchor = (H.bars and H.bars.hp) or H.root or UIParent
+  local f = CreateFrame("Frame", nil, anchor)
+  f:SetAllPoints(anchor)
+  f:SetFrameStrata("FULLSCREEN")
+  f:SetFrameLevel((anchor:GetFrameLevel() or 0) + 50)
+  local tex = f:CreateTexture(nil, "OVERLAY")
+  tex:SetAllPoints(f)
+  tex:SetColorTexture(0.1, 1.0, 0.6, 0) -- teal/green
+  f.tex = tex
+  f:Hide()
+  H.dispel.frame = f
+  H.dispel._pulse = { t=0, speed=2.5, minA=0.12, maxA=0.40, active=false }
+  f:SetScript("OnUpdate", function(self, elapsed)
+    local p = H.dispel._pulse
+    if p and p.active then
+      p.t = (p.t + elapsed * p.speed) % (2*math.pi)
+      local a = p.minA + (p.maxA - p.minA) * (0.5 + 0.5 * math.sin(p.t))
+      self.tex:SetColorTexture(0.1, 1.0, 0.6, a)
+    end
+  end)
+
+  local ev = CreateFrame("Frame")
+  ev:RegisterEvent("UNIT_AURA")
+  ev:RegisterEvent("PLAYER_LOGIN")
+  ev:RegisterEvent("PLAYER_ENTERING_WORLD")
+  ev:SetScript("OnEvent", function(_, evt, unit)
+    if evt == "UNIT_AURA" and unit ~= "player" then return end
+    H.UpdateDispelHighlight()
+  end)
+  H.dispel.ev = ev
+end
+
+local function PlayerCanDispelType(dt)
+  local _, class = UnitClass("player")
+  local map = DispelByClass[class or ""]
+  return map and map[dt] or false
+end
+
+function H.UpdateDispelHighlight()
+  if not HardcoreHUDDB.trackers or not HardcoreHUDDB.trackers.dispelEnabled then
+    if H.dispel and H.dispel.frame then H.dispel.frame:Hide() end
+    if H.dispel and H.dispel._pulse then H.dispel._pulse.active = false end
+    return
+  end
+  local found = false
+  for i=1, 40 do
+    local name, _, _, _, debuffType = UnitDebuff("player", i)
+    if not name then break end
+    if debuffType and PlayerCanDispelType(debuffType) then
+      found = true
+      break
+    end
+  end
+  if found then
+    if not H.dispel or not H.dispel.frame then H.InitDispelHighlight() end
+    if H.dispel then
+      H.dispel._pulse.active = true
+      H.dispel.frame:Show()
+      if HardcoreHUDDB.trackers.dispelSound and not H.dispel._played then
+        H.dispel._played = true
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/AlarmClockWarning3.wav") end
+      end
+    end
+  else
+    if H.dispel then
+      H.dispel._pulse.active = false
+      if H.dispel.frame then H.dispel.frame:Hide() end
+      H.dispel._played = false
+    end
+  end
+end
+
+-- Audio defaults expansion
+HardcoreHUDDB.audio = HardcoreHUDDB.audio or { enabled = true }
+if HardcoreHUDDB.audio.critHP == nil then HardcoreHUDDB.audio.critHP = true end
+if HardcoreHUDDB.audio.breath == nil then HardcoreHUDDB.audio.breath = true end
+if HardcoreHUDDB.audio.castFinish == nil then HardcoreHUDDB.audio.castFinish = true end
+if HardcoreHUDDB.audio.castInterrupted == nil then HardcoreHUDDB.audio.castInterrupted = true end
+if HardcoreHUDDB.audio.oom == nil then HardcoreHUDDB.audio.oom = true end
 
 -- Drowning (breath) warning: blue pulsing fullscreen overlay
 HardcoreHUDDB.breath = HardcoreHUDDB.breath or { enabled = true }
@@ -267,7 +524,14 @@ function H.UpdateBreathWarning()
   local triggerSec = (HardcoreHUDDB.breath.secondsThreshold or 20)
   if remainingSec <= triggerSec then
     if not H.breathOverlay then H.InitBreathWarning() end
-    if H.breathOverlay then H.breathOverlay:Show() end
+    if H.breathOverlay and not H.breathOverlay:IsShown() then
+      H.breathOverlay:Show()
+      if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled and HardcoreHUDDB.audio.breath then
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/MapPing.wav") end
+      end
+    elseif H.breathOverlay then
+      H.breathOverlay:Show()
+    end
   else
     H.HideBreathWarning()
   end
@@ -327,7 +591,14 @@ function H.UpdateCriticalOverlay()
   local thresh = (HardcoreHUDDB.warnings.criticalThreshold or 0.20)
   if pct <= thresh and (HardcoreHUDDB.warnings.enabled ~= false) and (HardcoreHUDDB.warnings.criticalHP ~= false) then
     if not H.critOverlay then H.InitCriticalOverlay() end
-    if H.critOverlay then H.critOverlay:Show() end
+    if H.critOverlay and not H.critOverlay:IsShown() then
+      H.critOverlay:Show()
+      if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled and HardcoreHUDDB.audio.critHP then
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/AlarmClockWarning2.wav") end
+      end
+    elseif H.critOverlay then
+      H.critOverlay:Show()
+    end
   else
     H.HideCriticalOverlay()
   end
@@ -390,14 +661,20 @@ ev:RegisterEvent("UNIT_COMBO_POINTS")
 ev:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 ev:RegisterEvent("UNIT_TARGET")
 ev:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
+ev:RegisterEvent("BAG_UPDATE_COOLDOWN")
+ev:RegisterEvent("BAG_UPDATE")
+ev:RegisterEvent("SPELLS_CHANGED")
+ev:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 ev:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     H.Init()
     H.UpdateAll()
+    if H.UpdateOOMOverlay then H.UpdateOOMOverlay(true) end
   elseif event == "UNIT_POWER" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER" or event == "UNIT_ENERGY" or event == "UNIT_RAGE" or event == "UNIT_MANA" then
     local unit = ...
     if unit == "player" then
       H.UpdatePower()
+      if H.UpdateOOMOverlay then H.UpdateOOMOverlay() end
     elseif unit == "target" then
       H.UpdateTarget()
     end
@@ -418,11 +695,17 @@ ev:SetScript("OnEvent", function(_, event, ...)
   elseif event == "UNIT_THREAT_LIST_UPDATE" then
     local unit = ...
     if H.OnThreatListUpdate then H.OnThreatListUpdate(unit) end
+  elseif event == "BAG_UPDATE_COOLDOWN" or event == "BAG_UPDATE" or event == "SPELLS_CHANGED" or event == "SPELL_UPDATE_COOLDOWN" then
+    if H.UpdateOOMOverlay then H.UpdateOOMOverlay() end
   end
 end)
 
 function H.Init()
   H.BuildBars()
+  if H.InitTargetCastBar then H.InitTargetCastBar() end
+  if H.InitInterruptTracker then H.InitInterruptTracker() end
+  if H.InitDispelHighlight then H.InitDispelHighlight() end
+  if H.InitOOMOverlay then H.InitOOMOverlay() end
   if H.BuildWarnings then
     H.BuildWarnings()
   else
@@ -529,6 +812,167 @@ function H.Init()
   end
 end
 
+-- OOM soon (mana) overlay anchored to mana bar
+HardcoreHUDDB.oom = HardcoreHUDDB.oom or { enabled = true, threshold = 0.25 }
+
+-- Mana recovery sources by class/race (best-effort IDs across client versions)
+local RecoverySpellsByClass = {
+  MAGE   = { 12051 },   -- Evocation
+  DRUID  = { 29166 },   -- Innervate
+  PRIEST = { 34433 },   -- Shadowfiend
+}
+local RecoverySpellsByRace = {
+  BLOODELF = { 28730, 25046, 50613 }, -- Arcane Torrent variants
+}
+
+local function IsSpellReadyForPlayer(spellId)
+  if not spellId then return false end
+  if IsPlayerSpell and not IsPlayerSpell(spellId) then return false end
+  if not GetSpellCooldown then return true end
+  local s, d = GetSpellCooldown(spellId)
+  if not s or s == 0 then return true end
+  return (s + d - GetTime()) <= 0
+end
+
+local function PlayerHasManaRecoveryReady()
+  local _, class = UnitClass("player")
+  local race = select(2, UnitRace("player"))
+  local list = {}
+  if class and RecoverySpellsByClass[class] then
+    for _, id in ipairs(RecoverySpellsByClass[class]) do table.insert(list, id) end
+  end
+  if race and RecoverySpellsByRace[string.upper(race)] then
+    for _, id in ipairs(RecoverySpellsByRace[string.upper(race)]) do table.insert(list, id) end
+  end
+  for _, id in ipairs(list) do
+    if IsSpellReadyForPlayer(id) then return true end
+  end
+  return false
+end
+
+local function FindReadyManaPotion()
+  if not GetContainerNumSlots or not GetContainerItemID or not GetItemCooldown then return nil end
+  for bag=0,4 do
+    local slots = GetContainerNumSlots(bag)
+    if slots then
+      for slot=1,slots do
+        local itemID = GetContainerItemID(bag, slot)
+        if itemID then
+          local name = GetItemInfo and GetItemInfo(itemID)
+          if name and string.find(string.lower(name), "mana") and string.find(string.lower(name), "potion") then
+            local start, duration = GetItemCooldown(itemID)
+            if not start or start == 0 or (start + duration - GetTime()) <= 0 then
+              return itemID
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+function H.InitOOMOverlay()
+  if H.oomOverlay then return end
+  local anchor = (H.bars and H.bars.pow) or H.root or UIParent
+  local f = CreateFrame("Frame", nil, anchor)
+  f:SetAllPoints(anchor)
+  f:SetFrameStrata("FULLSCREEN")
+  f:SetFrameLevel((anchor:GetFrameLevel() or 0) + 55)
+  local tex = f:CreateTexture(nil, "OVERLAY")
+  tex:SetAllPoints(f)
+  tex:SetColorTexture(0.2, 0.6, 1.0, 0)
+  f.tex = tex
+  f:Hide()
+  H.oomOverlay = f
+  f._pulse = { t=0, speed=2.2, minA=0.15, maxA=0.45, active=false }
+  f:SetScript("OnUpdate", function(self, elapsed)
+    local p = self._pulse
+    if p and p.active then
+      p.t = (p.t + elapsed * p.speed) % (2*math.pi)
+      local a = p.minA + (p.maxA - p.minA) * (0.5 + 0.5 * math.sin(p.t))
+      self.tex:SetColorTexture(0.2, 0.6, 1.0, a)
+    end
+  end)
+  -- lightweight poller to catch threshold crossings even without events
+  if not H._oomPoll then
+    local poll = CreateFrame("Frame")
+    poll._acc = 0
+    poll:SetScript("OnUpdate", function(self, elapsed)
+      self._acc = self._acc + elapsed
+      if self._acc >= 0.3 then
+        self._acc = 0
+        if H.UpdateOOMOverlay then H.UpdateOOMOverlay() end
+      end
+    end)
+    H._oomPoll = poll
+  end
+end
+
+function H.UpdateOOMOverlay(force)
+  if not HardcoreHUDDB.oom or HardcoreHUDDB.oom.enabled == false then
+    if H.oomOverlay then H.oomOverlay:Hide(); H.oomOverlay._pulse.active = false end
+    return
+  end
+  local ptype = UnitPowerType and UnitPowerType("player") or 1
+  if ptype ~= 0 then -- only mana
+    if H.oomOverlay then H.oomOverlay:Hide(); H.oomOverlay._pulse.active = false end
+    return
+  end
+  local cur = (UnitPower and UnitPower("player", 0)) or UnitMana("player")
+  local max = (UnitPowerMax and UnitPowerMax("player", 0)) or UnitManaMax("player")
+  if not max or max <= 0 then
+    if H.oomOverlay then H.oomOverlay:Hide(); H.oomOverlay._pulse.active = false end
+    return
+  end
+  local pct = cur / max
+  local thr = HardcoreHUDDB.oom.threshold or 0.25
+  local considerRecovery = (HardcoreHUDDB.oom.considerRecovery ~= false)
+  local readyPotion = FindReadyManaPotion()
+  local recoveryReady = considerRecovery and PlayerHasManaRecoveryReady() or false
+  local noRecovery = (not readyPotion) and (not recoveryReady)
+  local shouldShow = (pct <= thr) and (considerRecovery and noRecovery or true)
+  -- Also surface a separate clickable mana potion button (does not replace healing potion)
+  if H.manaBtn then
+    if pct <= thr and readyPotion then
+      H.manaBtn.itemID = readyPotion
+      local itemName = GetItemInfo and GetItemInfo(readyPotion)
+      local attrVal = itemName and itemName or ("item:"..tostring(readyPotion))
+      if H.manaBtn.SetAttribute then H.manaBtn:SetAttribute("item", attrVal) end
+      if H.manaBtn.icon and GetItemIcon then H.manaBtn.icon:SetTexture(GetItemIcon(readyPotion) or "Interface/Icons/INV_Potion_76") end
+      H.manaBtn:Show()
+    else
+      H.manaBtn:Hide()
+    end
+  end
+  if shouldShow then
+    if not H.oomOverlay then H.InitOOMOverlay() end
+    if H.oomOverlay and not H.oomOverlay:IsShown() then
+      H.oomOverlay._pulse.active = true
+      H.oomOverlay:Show()
+      if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled and HardcoreHUDDB.audio.oom then
+        if PlaySoundFile then PlaySoundFile("Sound/Interface/MapPing.wav") end
+      end
+    elseif H.oomOverlay then
+      H.oomOverlay._pulse.active = true
+      H.oomOverlay:Show()
+    end
+  else
+    if HardcoreHUDDB.debug and HardcoreHUDDB.debug.oom then
+      if pct > thr then
+        print(string.format("HardcoreHUD OOM: pct=%.2f above thr=%.2f", pct, thr))
+      elseif considerRecovery and readyPotion then
+        print("HardcoreHUD OOM: suppressed (mana potion ready)")
+      elseif considerRecovery and recoveryReady then
+        print("HardcoreHUD OOM: suppressed (recovery spell ready)")
+      else
+        print("HardcoreHUD OOM: suppressed (overlay disabled or unknown)")
+      end
+    end
+    if H.oomOverlay then H.oomOverlay._pulse.active = false; H.oomOverlay:Hide() end
+  end
+end
+
 function H.UpdateAll()
   H.UpdatePower(); H.UpdateHealth(); H.UpdateTarget()
 end
@@ -610,6 +1054,24 @@ if not H.ShowZonesWindow then
     { name = "Eastern Plaguelands", range = "53-60", side = "Contested" },
     { name = "Winterspring", range = "55-60", side = "Contested" },
   }
+  -- Instances near each zone with level brackets
+  local zoneInstances = {
+    ["Durotar"] = { {name="Ragefire Chasm", range="13-18"} },
+    ["Barrens"] = { {name="Wailing Caverns", range="17-24"}, {name="Razorfen Kraul", range="23-30"} },
+    ["Westfall"] = { {name="Deadmines", range="17-26"} },
+    ["Tirisfal Glades"] = { {name="Scarlet Monastery", range="26-45"} },
+    ["Silverpine Forest"] = { {name="Shadowfang Keep", range="22-30"} },
+    ["Stonetalon Mountains"] = { {name="Blackfathom Deeps", range="20-30"} },
+    ["Desolace"] = { {name="Maraudon", range="45-52"} },
+    ["Badlands"] = { {name="Uldaman", range="35-45"} },
+    ["Swamp of Sorrows"] = { {name="Sunken Temple", range="50-54"} },
+    ["Searing Gorge"] = { {name="Blackrock Depths", range="52-60"} },
+    ["Burning Steppes"] = { {name="Blackrock Spire", range="55-60"} },
+    ["Stranglethorn Vale"] = { {name="Zul'Farrak", range="44-54"} },
+    ["Feralas"] = { {name="Dire Maul", range="55-60"} },
+    ["Eastern Plaguelands"] = { {name="Scholomance", range="58-60"} },
+    ["Western Plaguelands"] = { {name="Stratholme", range="58-60"} },
+  }
   local function buildWindow()
     if H.zonesFrame then return end
     local f = CreateFrame("Frame", "HardcoreHUDZones", UIParent)
@@ -669,6 +1131,20 @@ if not H.ShowZonesWindow then
         else
           line:SetTextColor(1, 0.85, 0)
         end
+        -- Tooltip on hover: show nearby instances and level brackets
+        line:EnableMouse(true)
+        line:SetScript("OnEnter", function(self)
+          local inst = zoneInstances[z.name]
+          if not inst or #inst == 0 then return end
+          GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+          GameTooltip:ClearLines()
+          GameTooltip:AddLine("Nearby Instances", 1, 0.92, 0.2)
+          for _, info in ipairs(inst) do
+            GameTooltip:AddLine(string.format("%s  (%s)", info.name, info.range), 0.9, 0.9, 0.9)
+          end
+          GameTooltip:Show()
+        end)
+        line:SetScript("OnLeave", function() GameTooltip:Hide() end)
         y = y - 20
       end
       if #filtered == 0 then

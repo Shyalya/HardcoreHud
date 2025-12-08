@@ -125,6 +125,11 @@ end
 
 function H.ShowCriticalHPWarning()
   if HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.criticalHP then
+    -- Suppress critical HP warning when dead or a ghost
+    if (UnitIsDead and UnitIsDead("player")) or (UnitIsGhost and UnitIsGhost("player")) then
+      H.HideCriticalHPWarning()
+      return
+    end
     if not H.warnHP then
       local w = CreateFrame("Frame", nil, UIParent)
       w:SetSize(1,1)
@@ -181,6 +186,11 @@ if not H._critHPDriver then
   cf:SetScript("OnEvent", function(_, event, unit)
     if unit and unit ~= "player" then return end
     if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.criticalHP) then return end
+    -- Suppress display while dead/ghost
+    if (UnitIsDead and UnitIsDead("player")) or (UnitIsGhost and UnitIsGhost("player")) then
+      H.HideCriticalHPWarning()
+      return
+    end
     local hp = UnitHealth("player") or 0
     local max = UnitHealthMax("player") or 1
     local ratio = max > 0 and (hp / max) or 1
@@ -340,8 +350,15 @@ end
 
 function H.TriggerEliteSkullTest()
   -- Force show for test regardless of DB toggles
-  if H.skull then H.skull:Show() end
-  if H.EliteAttentionText then H.EliteAttentionText:Show() end
+    if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.levelElite) then
+      if H.skull then H.skull:Hide() end
+      if H.EliteAttentionText then H.EliteAttentionText:Hide() end
+      if H.eliteTextFrame then H.eliteTextFrame:Hide() end
+      if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
+      return
+    end
+    if H.skull then H.skull:Show() end
+    if H.EliteAttentionText then H.EliteAttentionText:Show() end
   if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Show() end end
   PlayEliteSound()
   After(2.0, function()

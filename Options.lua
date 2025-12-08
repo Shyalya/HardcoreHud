@@ -61,6 +61,16 @@ function H.BuildOptions()
   local panelRemind   = makePanel()
   local panelAdvanced = makePanel()
 
+  -- Advanced panel: create two column containers to avoid overflow
+  local advLeft = CreateFrame("Frame", nil, panelAdvanced)
+  advLeft:SetPoint("TOPLEFT", panelAdvanced, "TOPLEFT", 0, 0)
+  advLeft:SetPoint("BOTTOM", panelAdvanced, "BOTTOM", 0, 0)
+  advLeft:SetWidth(math.floor((content:GetWidth() or 680) / 2) - 12)
+
+  local advRight = CreateFrame("Frame", nil, panelAdvanced)
+  advRight:SetPoint("TOPLEFT", advLeft, "TOPRIGHT", 24, 0)
+  advRight:SetPoint("BOTTOMRIGHT", panelAdvanced, "BOTTOMRIGHT", 0, 0)
+
   local function showPanel(p)
     panelLayout:Hide(); panelWarnings:Hide(); panelRemind:Hide(); panelAdvanced:Hide()
     p:Show()
@@ -80,8 +90,7 @@ function H.BuildOptions()
   thickness:SetValue(HardcoreHUDDB.layout and HardcoreHUDDB.layout.thickness or 12)
   if _G[thickness:GetName().."Low"] then _G[thickness:GetName().."Low"]:SetText("6") end
   if _G[thickness:GetName().."High"] then _G[thickness:GetName().."High"]:SetText("32") end
-  if _G[thickness:GetName().."Text"] then _G[thickness:GetName().."Text"]:SetText("Dicke") end
-    if _G[thickness:GetName().."Text"] then _G[thickness:GetName().."Text"]:SetText("Thickness") end
+  if _G[thickness:GetName().."Text"] then _G[thickness:GetName().."Text"]:SetText("Thickness") end
   thickness:SetScript("OnValueChanged", function(self, val)
     HardcoreHUDDB.layout = HardcoreHUDDB.layout or {}
     HardcoreHUDDB.layout.thickness = val
@@ -97,8 +106,7 @@ function H.BuildOptions()
   height:SetValue(HardcoreHUDDB.layout and HardcoreHUDDB.layout.height or 200)
   if _G[height:GetName().."Low"] then _G[height:GetName().."Low"]:SetText("120") end
   if _G[height:GetName().."High"] then _G[height:GetName().."High"]:SetText("320") end
-  if _G[height:GetName().."Text"] then _G[height:GetName().."Text"]:SetText("Höhe") end
-    if _G[height:GetName().."Text"] then _G[height:GetName().."Text"]:SetText("Height") end
+  if _G[height:GetName().."Text"] then _G[height:GetName().."Text"]:SetText("Height") end
   height:SetScript("OnValueChanged", function(self, val)
     HardcoreHUDDB.layout = HardcoreHUDDB.layout or {}
     HardcoreHUDDB.layout.height = val
@@ -113,8 +121,7 @@ function H.BuildOptions()
   sep:SetValue(HardcoreHUDDB.layout and HardcoreHUDDB.layout.separation or 140)
   if _G[sep:GetName().."Low"] then _G[sep:GetName().."Low"]:SetText("80") end
   if _G[sep:GetName().."High"] then _G[sep:GetName().."High"]:SetText("240") end
-  if _G[sep:GetName().."Text"] then _G[sep:GetName().."Text"]:SetText("Abstand zur Mitte") end
-    if _G[sep:GetName().."Text"] then _G[sep:GetName().."Text"]:SetText("Separation from Center") end
+  if _G[sep:GetName().."Text"] then _G[sep:GetName().."Text"]:SetText("Separation from Center") end
   sep:SetScript("OnValueChanged", function(self, val)
     HardcoreHUDDB.layout = HardcoreHUDDB.layout or {}
     HardcoreHUDDB.layout.separation = val
@@ -135,7 +142,7 @@ function H.BuildOptions()
     print("HardcoreHUD: Warnings "..(HardcoreHUDDB.warnings.enabled and "ON" or "OFF"))
     if not HardcoreHUDDB.warnings.enabled then
       if H.HideCriticalHPWarning then H.HideCriticalHPWarning() end
-    lock:SetPoint("TOPLEFT", critThresh, "BOTTOMLEFT", 0, -18)
+      if H.skull then H.skull:Hide() end
       if H.EliteAttentionText then H.EliteAttentionText:Hide() end
       if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
     else
@@ -147,8 +154,7 @@ function H.BuildOptions()
   crit:ClearAllPoints()
   crit:SetPoint("TOPLEFT", warnEnable, "BOTTOMLEFT", 0, -18)
   crit:SetChecked(HardcoreHUDDB.warnings.criticalHP)
-  if _G[crit:GetName().."Text"] then _G[crit:GetName().."Text"]:SetText("Kritische HP Warnung") end
-    if _G[crit:GetName().."Text"] then _G[crit:GetName().."Text"]:SetText("Critical HP Warning") end
+  if _G[crit:GetName().."Text"] then _G[crit:GetName().."Text"]:SetText("Critical HP Warning") end
   crit:SetScript("OnClick", function(self) HardcoreHUDDB.warnings.criticalHP = self:GetChecked() end)
 
   -- Red pulsing screen overlay toggle for critical HP
@@ -162,29 +168,6 @@ function H.BuildOptions()
     HardcoreHUDDB.warnings.criticalOverlayEnabled = self:GetChecked()
     print("HardcoreHUD: Critical red pulse "..(HardcoreHUDDB.warnings.criticalOverlayEnabled and "ON" or "OFF"))
     if H.UpdateCriticalOverlay then H.UpdateCriticalOverlay() end
-  end)
-
-  local skull = CreateFrame("CheckButton", "HardcoreHUDSkullWarn", panelWarnings, "OptionsCheckButtonTemplate")
-  skull:ClearAllPoints()
-  -- Anchor skull below Critical Threshold to avoid overlap
-  skull:SetPoint("TOPLEFT", critThresh, "BOTTOMLEFT", 0, -18)
-  skull:SetChecked(HardcoreHUDDB.warnings.levelElite)
-  if _G[skull:GetName().."Text"] then _G[skull:GetName().."Text"]:SetText("Elite/+2 Level Totenkopf") end
-    if _G[skull:GetName().."Text"] then _G[skull:GetName().."Text"]:SetText("Elite/+2 Level Skull") end
-  skull:SetScript("OnClick", function(self) HardcoreHUDDB.warnings.levelElite = self:GetChecked(); H.CheckSkull() end)
-
-  -- Latency/FPS warning toggle (performance)
-  local perf = CreateFrame("CheckButton", "HardcoreHUDPerfWarn", panelWarnings, "OptionsCheckButtonTemplate")
-  perf:ClearAllPoints()
-  perf:SetPoint("TOPLEFT", skull, "BOTTOMLEFT", 0, -18)
-  HardcoreHUDDB.warnings.latency = (HardcoreHUDDB.warnings.latency ~= false)
-  perf:SetChecked(HardcoreHUDDB.warnings.latency)
-  if _G[perf:GetName().."Text"] then _G[perf:GetName().."Text"]:SetText("Latenz/FPS Warnung") end
-    if _G[perf:GetName().."Text"] then _G[perf:GetName().."Text"]:SetText("Latency/FPS Warning") end
-  perf:SetScript("OnClick", function(self)
-    HardcoreHUDDB.warnings.latency = self:GetChecked()
-    if not HardcoreHUDDB.warnings.latency and H.perfWarn then H.perfWarn:Hide() end
-    print("HardcoreHUD: perf warning "..(HardcoreHUDDB.warnings.latency and "ON" or "OFF"))
   end)
 
   -- Critical HP threshold slider
@@ -206,6 +189,29 @@ function H.BuildOptions()
     print("HardcoreHUD: Critical HP threshold = "..math.floor(val*100+0.5).."%")
     if H.UpdateHealth then H.UpdateHealth() end
   end)
+
+  local skull = CreateFrame("CheckButton", "HardcoreHUDSkullWarn", panelWarnings, "OptionsCheckButtonTemplate")
+  skull:ClearAllPoints()
+  -- Anchor skull below Critical Threshold to avoid overlap
+  skull:SetPoint("TOPLEFT", critThresh, "BOTTOMLEFT", 0, -18)
+  skull:SetChecked(HardcoreHUDDB.warnings.levelElite)
+  if _G[skull:GetName().."Text"] then _G[skull:GetName().."Text"]:SetText("Elite/+2 Level Skull") end
+  skull:SetScript("OnClick", function(self) HardcoreHUDDB.warnings.levelElite = self:GetChecked(); H.CheckSkull() end)
+
+  -- Latency/FPS warning toggle (performance)
+  local perf = CreateFrame("CheckButton", "HardcoreHUDPerfWarn", panelWarnings, "OptionsCheckButtonTemplate")
+  perf:ClearAllPoints()
+  perf:SetPoint("TOPLEFT", skull, "BOTTOMLEFT", 0, -18)
+  HardcoreHUDDB.warnings.latency = (HardcoreHUDDB.warnings.latency ~= false)
+  perf:SetChecked(HardcoreHUDDB.warnings.latency)
+  if _G[perf:GetName().."Text"] then _G[perf:GetName().."Text"]:SetText("Latency/FPS Warning") end
+  perf:SetScript("OnClick", function(self)
+    HardcoreHUDDB.warnings.latency = self:GetChecked()
+    if not HardcoreHUDDB.warnings.latency and H.perfWarn then H.perfWarn:Hide() end
+    print("HardcoreHUD: perf warning "..(HardcoreHUDDB.warnings.latency and "ON" or "OFF"))
+  end)
+
+  
 
   -- (Rounded and texture options removed)
 
@@ -261,13 +267,13 @@ function H.BuildOptions()
       if isLocked then ct:Show() else ct:Hide() end
     end
   end
-  if _G[lock:GetName().."Text"] then _G[lock:GetName().."Text"]:SetText("HUD sperren (Drag deaktivieren)") end
-    if _G[lock:GetName().."Text"] then _G[lock:GetName().."Text"]:SetText("Lock HUD (disable drag)") end
+  if _G[lock:GetName().."Text"] then _G[lock:GetName().."Text"]:SetText("Lock HUD (disable drag)") end
   lock:SetScript("OnClick", function(self)
     local isLocked = self:GetChecked()
     HardcoreHUDDB.lock = isLocked
     if H.ApplyLock then H.ApplyLock() end
     H.root:SetMovable(not isLocked)
+    if H.SetHUDMouseEnabled then H.SetHUDMouseEnabled(isLocked) end
     if isLocked then
       H.root:EnableMouse(false)
       print("HardcoreHUD: HUD locked")
@@ -294,6 +300,7 @@ function H.BuildOptions()
   -- Initial sync to ensure checkbox reflects DB on first build
   if HardcoreHUDDB.lock == nil then HardcoreHUDDB.lock = true end
   lock:SetChecked(true)
+  if H.SetHUDMouseEnabled then H.SetHUDMouseEnabled(true) end
 
   -- Keep checkbox in sync on options frame show
   f:SetScript("OnShow", function()
@@ -328,8 +335,7 @@ end
   center:ClearAllPoints()
   center:SetPoint("TOPLEFT", panelRemind, "TOPLEFT", 0, -12)
   center:SetSize(170, 24)
-  center:SetText("HUD zentrieren")
-    center:SetText("Center HUD")
+  center:SetText("Center HUD")
   center:SetFrameStrata("FULLSCREEN_DIALOG")
   center:SetFrameLevel(panelRemind:GetFrameLevel()+1)
   center:SetScript("OnClick", function()
@@ -443,9 +449,9 @@ end
   -- Emergency CDs pulse toggle
   HardcoreHUDDB.emergency = HardcoreHUDDB.emergency or { enabled = true, hpThreshold = 0.50 }
   -- Advanced panel controls
-  local emEnable = CreateFrame("CheckButton", "HardcoreHUDEmergencyEnable", panelAdvanced, "OptionsCheckButtonTemplate")
+  local emEnable = CreateFrame("CheckButton", "HardcoreHUDEmergencyEnable", advLeft, "OptionsCheckButtonTemplate")
   emEnable:ClearAllPoints()
-  emEnable:SetPoint("TOPLEFT", panelAdvanced, "TOPLEFT", 0, -8)
+  emEnable:SetPoint("TOPLEFT", advLeft, "TOPLEFT", 0, -8)
   emEnable:SetChecked(HardcoreHUDDB.emergency.enabled)
   if _G[emEnable:GetName().."Text"] then _G[emEnable:GetName().."Text"]:SetText("Notfall-CD Puls") end
     if _G[emEnable:GetName().."Text"] then _G[emEnable:GetName().."Text"]:SetText("Emergency CD Pulse") end
@@ -459,7 +465,7 @@ end
   if HardcoreHUDDB.breath.secondsThreshold == nil then HardcoreHUDDB.breath.secondsThreshold = 20 end
   -- remove deprecated percentage threshold to avoid confusion
   HardcoreHUDDB.breath.threshold = nil
-  local breathEnable = CreateFrame("CheckButton", "HardcoreHUDBreathEnable", panelAdvanced, "OptionsCheckButtonTemplate")
+  local breathEnable = CreateFrame("CheckButton", "HardcoreHUDBreathEnable", advLeft, "OptionsCheckButtonTemplate")
   breathEnable:ClearAllPoints()
   breathEnable:SetPoint("TOPLEFT", emEnable, "BOTTOMLEFT", 0, -16)
   breathEnable:SetChecked(HardcoreHUDDB.breath.enabled ~= false)
@@ -472,7 +478,7 @@ end
 
   -- Target Cast Bar toggle
   HardcoreHUDDB.castbar = HardcoreHUDDB.castbar or { enabled = true }
-  local castEnable = CreateFrame("CheckButton", "HardcoreHUDCastBarEnable", panelAdvanced, "OptionsCheckButtonTemplate")
+  local castEnable = CreateFrame("CheckButton", "HardcoreHUDCastBarEnable", advLeft, "OptionsCheckButtonTemplate")
   castEnable:ClearAllPoints()
   castEnable:SetPoint("TOPLEFT", breathEnable, "BOTTOMLEFT", 0, -16)
   castEnable:SetChecked(HardcoreHUDDB.castbar.enabled ~= false)
@@ -483,7 +489,7 @@ end
     if H.UpdateTargetCastBarVisibility then H.UpdateTargetCastBarVisibility() end
   end)
 
-  local breathThresh = CreateFrame("Slider", "HardcoreHUDBreathThreshold", panelAdvanced, "OptionsSliderTemplate")
+  local breathThresh = CreateFrame("Slider", "HardcoreHUDBreathThreshold", advLeft, "OptionsSliderTemplate")
   breathThresh:ClearAllPoints()
   breathThresh:SetPoint("TOPLEFT", castEnable, "BOTTOMLEFT", 0, -18)
   breathThresh:SetMinMaxValues(5, 60)
@@ -501,7 +507,7 @@ end
   end)
 
   -- Emergency HP threshold slider
-  local emHP = CreateFrame("Slider", "HardcoreHUDEmergencyHPSlider", panelAdvanced, "OptionsSliderTemplate")
+  local emHP = CreateFrame("Slider", "HardcoreHUDEmergencyHPSlider", advLeft, "OptionsSliderTemplate")
   emHP:ClearAllPoints()
   emHP:SetPoint("TOPLEFT", breathThresh, "BOTTOMLEFT", 0, -34)
   emHP:SetMinMaxValues(0.15, 0.90)
@@ -511,20 +517,168 @@ end
   emHP:SetValue(HardcoreHUDDB.emergency.hpThreshold or 0.50)
   if _G[emHP:GetName().."Low"] then _G[emHP:GetName().."Low"]:SetText("15%") end
   if _G[emHP:GetName().."High"] then _G[emHP:GetName().."High"]:SetText("90%") end
-  if _G[emHP:GetName().."Text"] then _G[emHP:GetName().."Text"]:SetText("Puls-Schwelle HP") end
-    if _G[emHP:GetName().."Text"] then _G[emHP:GetName().."Text"]:SetText("Pulse Threshold HP") end
+  if _G[emHP:GetName().."Text"] then _G[emHP:GetName().."Text"]:SetText("Pulse Threshold HP") end
   emHP:SetScript("OnValueChanged", function(self,val)
     val = tonumber(string.format("%.2f", val))
     HardcoreHUDDB.emergency.hpThreshold = val
     print("HardcoreHUD: Emergency HP threshold = "..math.floor(val*100+0.5).."%")
   end)
 
+  -- OOM Soon (mana) blue pulse
+  HardcoreHUDDB.oom = HardcoreHUDDB.oom or { enabled = true, threshold = 0.25 }
+  local oomEnable = CreateFrame("CheckButton", "HardcoreHUDOOMEnable", advLeft, "OptionsCheckButtonTemplate")
+  oomEnable:SetPoint("TOPLEFT", emHP, "BOTTOMLEFT", 0, -24)
+  oomEnable:SetChecked(HardcoreHUDDB.oom.enabled ~= false)
+  if _G[oomEnable:GetName().."Text"] then _G[oomEnable:GetName().."Text"]:SetText("OOM Soon (mana) Blue Pulse") end
+  oomEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.oom.enabled = self:GetChecked()
+    print("HardcoreHUD: OOM pulse "..(HardcoreHUDDB.oom.enabled and "ON" or "OFF"))
+    if H.UpdateOOMOverlay then H.UpdateOOMOverlay(true) end
+  end)
+
+  local oomThr = CreateFrame("Slider", "HardcoreHUDOOMThreshold", advLeft, "OptionsSliderTemplate")
+  oomThr:SetPoint("TOPLEFT", oomEnable, "BOTTOMLEFT", 0, -18)
+  oomThr:SetMinMaxValues(0.05, 0.60)
+  oomThr:SetValueStep(0.01)
+  if oomThr.SetObeyStepOnDrag then oomThr:SetObeyStepOnDrag(true) end
+  oomThr:SetValue(HardcoreHUDDB.oom.threshold or 0.25)
+  if _G[oomThr:GetName().."Low"] then _G[oomThr:GetName().."Low"]:SetText("5%") end
+  if _G[oomThr:GetName().."High"] then _G[oomThr:GetName().."High"]:SetText("60%") end
+  if _G[oomThr:GetName().."Text"] then _G[oomThr:GetName().."Text"]:SetText("OOM Threshold (%)") end
+  oomThr:SetScript("OnValueChanged", function(self,val)
+    val = tonumber(string.format("%.2f", val))
+    HardcoreHUDDB.oom.threshold = val
+    print("HardcoreHUD: OOM threshold = "..math.floor((val or 0)*100+0.5).."%")
+    if H.UpdateOOMOverlay then H.UpdateOOMOverlay(true) end
+  end)
+
+  -- Suppress when recovery available (potions/spells)
+  if HardcoreHUDDB.oom.considerRecovery == nil then HardcoreHUDDB.oom.considerRecovery = true end
+  local oomConsider = CreateFrame("CheckButton", "HardcoreHUDOOMConsiderRecovery", advLeft, "OptionsCheckButtonTemplate")
+  oomConsider:SetPoint("TOPLEFT", oomThr, "BOTTOMLEFT", 0, -10)
+  oomConsider:SetChecked(HardcoreHUDDB.oom.considerRecovery ~= false)
+  if _G[oomConsider:GetName().."Text"] then _G[oomConsider:GetName().."Text"]:SetText("Suppress if recovery ready") end
+  oomConsider:SetScript("OnClick", function(self)
+    HardcoreHUDDB.oom.considerRecovery = self:GetChecked()
+    print("HardcoreHUD: OOM suppression by recovery "..(HardcoreHUDDB.oom.considerRecovery and "ON" or "OFF"))
+    if H.UpdateOOMOverlay then H.UpdateOOMOverlay(true) end
+  end)
+
+  -- Trackers (Interrupt & Dispel)
+  HardcoreHUDDB.trackers = HardcoreHUDDB.trackers or { interruptEnabled = true, interruptSound = true, showInterruptButton = true, dispelEnabled = true, dispelSound = false }
+  local intrEnable = CreateFrame("CheckButton", "HardcoreHUDInterruptEnable", advRight, "OptionsCheckButtonTemplate")
+  intrEnable:ClearAllPoints()
+  intrEnable:SetPoint("TOPLEFT", advRight, "TOPLEFT", 0, -8)
+  intrEnable:SetChecked(HardcoreHUDDB.trackers.interruptEnabled ~= false)
+  if _G[intrEnable:GetName().."Text"] then _G[intrEnable:GetName().."Text"]:SetText("Interrupt Tracker (glow)") end
+  intrEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.trackers.interruptEnabled = self:GetChecked()
+    print("HardcoreHUD: Interrupt tracker "..(HardcoreHUDDB.trackers.interruptEnabled and "ON" or "OFF"))
+    if H.EvaluateInterruptState then H.EvaluateInterruptState(false) end
+  end)
+
+  local intrSound = CreateFrame("CheckButton", "HardcoreHUDInterruptSound", advRight, "OptionsCheckButtonTemplate")
+  intrSound:SetPoint("TOPLEFT", intrEnable, "BOTTOMLEFT", 0, -8)
+  intrSound:SetChecked(HardcoreHUDDB.trackers.interruptSound ~= false)
+  if _G[intrSound:GetName().."Text"] then _G[intrSound:GetName().."Text"]:SetText("Interrupt Sound") end
+  intrSound:SetScript("OnClick", function(self)
+    HardcoreHUDDB.trackers.interruptSound = self:GetChecked()
+    print("HardcoreHUD: Interrupt sound "..(HardcoreHUDDB.trackers.interruptSound and "ON" or "OFF"))
+  end)
+
+  local intrBtn = CreateFrame("CheckButton", "HardcoreHUDInterruptButtonToggle", advRight, "OptionsCheckButtonTemplate")
+  intrBtn:SetPoint("TOPLEFT", intrSound, "BOTTOMLEFT", 0, -8)
+  intrBtn:SetChecked(HardcoreHUDDB.trackers.showInterruptButton ~= false)
+  if _G[intrBtn:GetName().."Text"] then _G[intrBtn:GetName().."Text"]:SetText("Show Interrupt Button") end
+  intrBtn:SetScript("OnClick", function(self)
+    HardcoreHUDDB.trackers.showInterruptButton = self:GetChecked()
+    print("HardcoreHUD: Interrupt button "..(HardcoreHUDDB.trackers.showInterruptButton and "ON" or "OFF"))
+    if H.cast and H.cast.interruptButton then
+      if HardcoreHUDDB.trackers.showInterruptButton then H.cast.interruptButton:Show() else H.cast.interruptButton:Hide() end
+    end
+  end)
+
+  local dispEnable = CreateFrame("CheckButton", "HardcoreHUDDispelEnable", advRight, "OptionsCheckButtonTemplate")
+  dispEnable:SetPoint("TOPLEFT", intrBtn, "BOTTOMLEFT", 0, -16)
+  dispEnable:SetChecked(HardcoreHUDDB.trackers.dispelEnabled ~= false)
+  if _G[dispEnable:GetName().."Text"] then _G[dispEnable:GetName().."Text"]:SetText("Dispel Highlight (self)") end
+  dispEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.trackers.dispelEnabled = self:GetChecked()
+    print("HardcoreHUD: Dispel highlight "..(HardcoreHUDDB.trackers.dispelEnabled and "ON" or "OFF"))
+    if H.UpdateDispelHighlight then H.UpdateDispelHighlight() end
+  end)
+
+  local dispSound = CreateFrame("CheckButton", "HardcoreHUDDispelSound", advRight, "OptionsCheckButtonTemplate")
+  dispSound:SetPoint("TOPLEFT", dispEnable, "BOTTOMLEFT", 0, -8)
+  dispSound:SetChecked(HardcoreHUDDB.trackers.dispelSound == true)
+  if _G[dispSound:GetName().."Text"] then _G[dispSound:GetName().."Text"]:SetText("Dispel Sound") end
+  dispSound:SetScript("OnClick", function(self)
+    HardcoreHUDDB.trackers.dispelSound = self:GetChecked()
+    print("HardcoreHUD: Dispel sound "..(HardcoreHUDDB.trackers.dispelSound and "ON" or "OFF"))
+  end)
+
+  -- Audio Cues
+  HardcoreHUDDB.audio = HardcoreHUDDB.audio or { enabled = true }
+  if HardcoreHUDDB.audio.critHP == nil then HardcoreHUDDB.audio.critHP = true end
+  if HardcoreHUDDB.audio.breath == nil then HardcoreHUDDB.audio.breath = true end
+  if HardcoreHUDDB.audio.castFinish == nil then HardcoreHUDDB.audio.castFinish = true end
+  if HardcoreHUDDB.audio.castInterrupted == nil then HardcoreHUDDB.audio.castInterrupted = true end
+  if HardcoreHUDDB.audio.oom == nil then HardcoreHUDDB.audio.oom = true end
+
+  local audioEnable = CreateFrame("CheckButton", "HardcoreHUDAudioEnable", advRight, "OptionsCheckButtonTemplate")
+  audioEnable:SetPoint("TOPLEFT", dispSound, "BOTTOMLEFT", 0, -16)
+  audioEnable:SetChecked(HardcoreHUDDB.audio.enabled ~= false)
+  if _G[audioEnable:GetName().."Text"] then _G[audioEnable:GetName().."Text"]:SetText("Audio Cues Enabled") end
+  audioEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.audio.enabled = self:GetChecked()
+    print("HardcoreHUD: Audio cues "..(HardcoreHUDDB.audio.enabled and "ON" or "OFF"))
+  end)
+
+  local audioCrit = CreateFrame("CheckButton", "HardcoreHUDAudioCritHP", advRight, "OptionsCheckButtonTemplate")
+  audioCrit:SetPoint("TOPLEFT", audioEnable, "BOTTOMLEFT", 0, -8)
+  audioCrit:SetChecked(HardcoreHUDDB.audio.critHP ~= false)
+  if _G[audioCrit:GetName().."Text"] then _G[audioCrit:GetName().."Text"]:SetText("Critical HP Sound") end
+  audioCrit:SetScript("OnClick", function(self)
+    HardcoreHUDDB.audio.critHP = self:GetChecked()
+  end)
+
+  local audioBreath = CreateFrame("CheckButton", "HardcoreHUDAudioBreath", advRight, "OptionsCheckButtonTemplate")
+  audioBreath:SetPoint("TOPLEFT", audioCrit, "BOTTOMLEFT", 0, -8)
+  audioBreath:SetChecked(HardcoreHUDDB.audio.breath ~= false)
+  if _G[audioBreath:GetName().."Text"] then _G[audioBreath:GetName().."Text"]:SetText("Breath Threshold Sound") end
+  audioBreath:SetScript("OnClick", function(self)
+    HardcoreHUDDB.audio.breath = self:GetChecked()
+  end)
+
+  local audioFinish = CreateFrame("CheckButton", "HardcoreHUDAudioCastFinish", advRight, "OptionsCheckButtonTemplate")
+  audioFinish:SetPoint("TOPLEFT", audioBreath, "BOTTOMLEFT", 0, -8)
+  audioFinish:SetChecked(HardcoreHUDDB.audio.castFinish ~= false)
+  if _G[audioFinish:GetName().."Text"] then _G[audioFinish:GetName().."Text"]:SetText("Cast Finish Sound") end
+  audioFinish:SetScript("OnClick", function(self)
+    HardcoreHUDDB.audio.castFinish = self:GetChecked()
+  end)
+
+  local audioInterrupt = CreateFrame("CheckButton", "HardcoreHUDAudioCastInterrupted", advRight, "OptionsCheckButtonTemplate")
+  audioInterrupt:SetPoint("TOPLEFT", audioFinish, "BOTTOMLEFT", 0, -8)
+  audioInterrupt:SetChecked(HardcoreHUDDB.audio.castInterrupted ~= false)
+  if _G[audioInterrupt:GetName().."Text"] then _G[audioInterrupt:GetName().."Text"]:SetText("Cast Interrupted Sound") end
+  audioInterrupt:SetScript("OnClick", function(self)
+    HardcoreHUDDB.audio.castInterrupted = self:GetChecked()
+  end)
+
+  local audioOOM = CreateFrame("CheckButton", "HardcoreHUDAudioOOM", advRight, "OptionsCheckButtonTemplate")
+  audioOOM:SetPoint("TOPLEFT", audioInterrupt, "BOTTOMLEFT", 0, -8)
+  audioOOM:SetChecked(HardcoreHUDDB.audio.oom ~= false)
+  if _G[audioOOM:GetName().."Text"] then _G[audioOOM:GetName().."Text"]:SetText("OOM Sound") end
+  audioOOM:SetScript("OnClick", function(self)
+    HardcoreHUDDB.audio.oom = self:GetChecked()
+  end)
+
   local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   close:ClearAllPoints()
   close:SetPoint("BOTTOM", f, "BOTTOM", 0, 20)
   close:SetSize(140, 26)
-  close:SetText("Schließen")
-    close:SetText("Close")
+  close:SetText("Close")
   close:SetScript("OnClick", function() f:Hide() end)
 
   -- TTD configuration removed from options; use fixed defaults

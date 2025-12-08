@@ -3,6 +3,44 @@ HardcoreHUDDB = HardcoreHUDDB or {}
 -- Ensure saved variables table exists before any access
 HardcoreHUDDB = HardcoreHUDDB or {}
 H.UtilitiesVersion = "2025-11-29b"
+-- Print Utilities version at login to verify loaded file
+do
+  local vFrame = CreateFrame("Frame")
+  vFrame:RegisterEvent("PLAYER_LOGIN")
+  vFrame:SetScript("OnEvent", function()
+    DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] UtilitiesVersion="..(H.UtilitiesVersion or "unknown"))
+  end)
+end
+
+-- Unified tooltip positioning: middle-right of the screen
+function H.PositionTooltip()
+  if not GameTooltip then return end
+  GameTooltip:Hide()
+  GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+  GameTooltip:ClearAllPoints()
+  -- Middle right edge, slight inward offset
+  GameTooltip:SetPoint("RIGHT", UIParent, "RIGHT", -20, 0)
+end
+
+-- Fallback unified tooltip for spells/items if other modules call H.ShowUnifiedTooltip
+if not H.ShowUnifiedTooltip then
+  function H.ShowUnifiedTooltip(frameOrNil, spellID)
+    if not GameTooltip then return end
+    -- Anchor to unified position without changing global defaults
+    H.PositionTooltip()
+    if spellID and GameTooltip.SetSpellByID then
+      GameTooltip:SetSpellByID(spellID)
+    end
+    -- Some clients reset anchor after SetSpellByID; re-apply position
+    GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    GameTooltip:ClearAllPoints()
+    GameTooltip:SetPoint("RIGHT", UIParent, "RIGHT", -20, 0)
+    GameTooltip:Show()
+  end
+end
+
+-- Globally unify GameTooltip default anchor to prevent flicker back to cursor
+-- Do NOT override global tooltip behavior; position only when our buttons request it
 
 -- Healing potion itemIDs (Wrath 3.3.5 common)
 -- Healing potion ranks (Wrath 3.3.5). Highest rank should be used on button.
@@ -26,7 +64,14 @@ if not H._reminderEvents then
   H._reminderEvents:RegisterEvent("PLAYER_REGEN_ENABLED")  -- leaving combat
   H._reminderEvents:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
   H._reminderEvents:SetScript("OnEvent", function(self, event, ...)
+    local function shouldSuppressReminders()
+      return UnitIsDead and UnitIsDead("player")
+    end
     if not HardcoreHUDDB or not HardcoreHUDDB.reminders or HardcoreHUDDB.reminders.enabled == false then return end
+    if shouldSuppressReminders() then
+      if H.reminderFrame then H.reminderFrame:Hide() end
+      return
+    end
     if event == "PLAYER_ENTERING_WORLD" then
       if H.InitReminders then H.InitReminders() end
       if H.UpdateReminders then H.UpdateReminders() end
@@ -34,14 +79,17 @@ if not H._reminderEvents then
     elseif event == "UNIT_AURA" then
       local unit = ...
       if unit == "player" then
+        if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
         if H.UpdateReminders then H.UpdateReminders() end
       end
     elseif event == "PLAYER_REGEN_DISABLED" then
       -- In combat, re-evaluate missing buffs; keep frame visible if enabled
+      if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
       if H.UpdateReminders then H.UpdateReminders() end
       if H.reminderFrame and HardcoreHUDDB.reminders.enabled then H.reminderFrame:Show() end
     elseif event == "PLAYER_REGEN_ENABLED" then
       -- Out of combat, refresh once; visibility managed by UpdateReminders
+      if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
       if H.UpdateReminders then H.UpdateReminders() end
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
       -- Older clients pass combat log args directly via ...
@@ -50,6 +98,7 @@ if not H._reminderEvents then
             destGUID, destName, destFlags, destRaidFlags,
             spellId = ...
       if subEvent == "SPELL_AURA_REMOVED" and destGUID == UnitGUID("player") then
+        if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
         -- Refresh reminders immediately; if no icons are present, force a rebuild.
         if H.UpdateReminders then H.UpdateReminders() end
         local empty = false
@@ -61,8 +110,14 @@ if not H._reminderEvents then
           H.InitReminders()
           if H.UpdateReminders then H.UpdateReminders() end
         end
-        if H.reminderFrame and HardcoreHUDDB.reminders and HardcoreHUDDB.reminders.enabled then
-          H.reminderFrame:Show()
+        -- If still empty, hide to avoid showing a black box
+        if H.reminderFrame then
+          local count = (H.reminderFrame.icons and #H.reminderFrame.icons) or 0
+          if count > 0 and HardcoreHUDDB.reminders and HardcoreHUDDB.reminders.enabled and not shouldSuppressReminders() then
+            H.reminderFrame:Show()
+          else
+            H.reminderFrame:Hide()
+          end
         end
       end
     end
@@ -151,6 +206,47 @@ local function AttachSpellTooltip(btn, spellID)
   end)
 end
 
+-- Helper to attach an item tooltip (by ID or name)
+local function AttachItemTooltip(btn)
+  btn:EnableMouse(true)
+  btn:RegisterForClicks("AnyUp")
+  btn:SetScript("OnEnter", function(self)
+    if not GameTooltip then return end
+    H.PositionTooltip()
+local id = self.itemID
+local itm = self.GetAttribute and self:GetAttribute("item") or nil
+
+if id then
+  if GameTooltip.SetItemByID then
+    GameTooltip:SetItemByID(id)
+  elseif GameTooltip.SetHyperlink then
+    GameTooltip:SetHyperlink("item:"..tostring(id))
+  end
+elseif itm then
+  local linkStr
+  if type(itm) == "string" then
+    local idMatch = itm:match("item:%d+")
+    if idMatch then
+      linkStr = idMatch
+    else
+      local nameLink = select(2, GetItemInfo(itm))
+      if nameLink then linkStr = nameLink end
+    end
+  end
+  if not linkStr and self.itemID then
+    linkStr = "item:"..tostring(self.itemID)
+  end
+  if linkStr and GameTooltip.SetHyperlink then
+    GameTooltip:SetHyperlink(linkStr)
+  elseif type(itm) == "string" then
+    GameTooltip:SetText(itm)
+  end
+end
+GameTooltip:Show()
+  end)
+  btn:SetScript("OnLeave", function() if GameTooltip and GameTooltip:IsVisible() then GameTooltip:Hide() end end)
+end
+
 function H.BuildUtilities()
   -- Potion count and click-to-use
   local p = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
@@ -196,6 +292,66 @@ function H.BuildUtilities()
   pText:SetShadowOffset(1,-1)
   p.cdText = pText
   p:SetAttribute("type", "item")
+  AttachItemTooltip(p)
+  -- Ensure the healing potion button is visible immediately
+  p:Show()
+
+  -- Mana potion button (separate from healing potion)
+  local mp = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
+  H.manaBtn = mp
+  -- Optimal placement: to the right edge below the power bar
+  mp:ClearAllPoints()
+  if H.bars and H.bars.pow then
+    mp:SetPoint("TOPLEFT", H.bars.pow, "BOTTOMRIGHT", 8, -8)
+  elseif H.bars and H.bars.combo then
+    mp:SetPoint("TOPLEFT", H.bars.combo, "BOTTOMRIGHT", 8, -8)
+  else
+    mp:SetPoint("CENTER", UIParent, "CENTER", 80, -40)
+  end
+  mp:SetSize(28,28)
+  if mp.SetFrameStrata then mp:SetFrameStrata("HIGH") end
+  mp:EnableMouse(true)
+  mp:RegisterForClicks("AnyUp")
+  local mptex = mp:CreateTexture(nil, "ARTWORK")
+  mptex:SetAllPoints(mp)
+  mptex:SetTexture("Interface/Icons/INV_Potion_76")
+  mp.icon = mptex
+  local mpDim = mp:CreateTexture(nil, "OVERLAY")
+  mpDim:SetAllPoints(mp)
+  mpDim:SetColorTexture(0,0,0,0.55)
+  mpDim:Hide()
+  mp.dim = mpDim
+  local mpCd = CreateFrame("Cooldown", nil, mp, "CooldownFrameTemplate")
+  mpCd:SetAllPoints(mp)
+  mpCd:Hide()
+  mp.cooldown = mpCd
+  local mpText = mp:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  mpText:SetPoint("CENTER", mp, "CENTER", 0, 0)
+  if STANDARD_TEXT_FONT then mpText:SetFont(STANDARD_TEXT_FONT, 14, "OUTLINE") end
+  mpText:SetShadowColor(0,0,0,1)
+  mpText:SetShadowOffset(1,-1)
+  mp.cdText = mpText
+  mp:SetAttribute("type", "item")
+  AttachItemTooltip(mp)
+  -- Hide mana button for non-mana classes (e.g., Rogue energy, Warrior rage)
+  local function UpdateManaButtonVisibility()
+    local pType = UnitPowerType and UnitPowerType("player") or nil
+    local maxPow = UnitPowerMax and UnitPowerMax("player", 0) or nil
+    local isMana = (pType == 0) and (maxPow and maxPow > 0)
+    if isMana then
+      mp:Show()
+    else
+      mp:Hide()
+    end
+  end
+  mp:Hide()
+  local mpEvents = CreateFrame("Frame")
+  mpEvents:RegisterEvent("PLAYER_LOGIN")
+  mpEvents:RegisterEvent("UNIT_DISPLAYPOWER")
+  mpEvents:SetScript("OnEvent", function(_, evt, unit)
+    if evt == "UNIT_DISPLAYPOWER" and unit ~= "player" then return end
+    UpdateManaButtonVisibility()
+  end)
   
   -- Bandage button (self-use via macro)
   local bdg = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
@@ -233,6 +389,8 @@ function H.BuildUtilities()
   bText:SetShadowOffset(1,-1)
   bdg.cdText = bText
   bdg:SetAttribute("type", "macro")
+  -- Ensure the bandage button is visible immediately
+  bdg:Show()
   -- Hearthstone
   local hs = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.hearthBtn = hs
@@ -270,6 +428,9 @@ function H.BuildUtilities()
   hs:SetAttribute("type", "item")
   hs:SetAttribute("item", "Hearthstone")
   hs.itemID = 6948
+  AttachItemTooltip(hs)
+  -- Ensure the hearthstone button is visible immediately
+  hs:Show()
 
   -- update counts
   local updater = CreateFrame("Frame")
@@ -277,7 +438,19 @@ function H.BuildUtilities()
   updater:RegisterEvent("PLAYER_LOGIN")
   updater:SetScript("OnEvent", function()
     local bag, slot, name, itemID = findHighestPotion()
-    if name then p:SetAttribute("item", name); p.itemID = itemID end
+    if name then
+      p:SetAttribute("item", name)
+      p.itemID = itemID
+      local tex = select(10, GetItemInfo(itemID))
+      if tex and p.icon then p.icon:SetTexture(tex) end
+      if p.icon and p.icon.SetDesaturated then p.icon:SetDesaturated(false) end
+      if p.dim then p.dim:Hide() end
+    else
+      -- No healing potion found: show default icon dimmed
+      if p.icon then p.icon:SetTexture("Interface/Icons/INV_Potion_54") end
+      if p.icon and p.icon.SetDesaturated then p.icon:SetDesaturated(true) end
+      if p.dim then p.dim:Show() end
+    end
     local total = 0
     for bag=0,4 do
       local slots = GetContainerNumSlots(bag) or 0
@@ -338,6 +511,11 @@ function H.BuildUtilities()
       if bdg.dim then bdg.dim:Show() end
       bdg:Show()
     end
+    -- Update mana button tooltip/icon if a mana potion exists and is set elsewhere
+    if H.manaBtn and H.manaBtn.itemID then
+      local mtex = select(10, GetItemInfo(H.manaBtn.itemID))
+      if mtex and H.manaBtn.icon then H.manaBtn.icon:SetTexture(mtex) end
+    end
     if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.potions then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Potion count="..total)
     end
@@ -359,7 +537,7 @@ function H.BuildUtilities()
     ROGUE = {1856,5277,31224,2983}, -- Vanish, Evasion, Cloak of Shadows, Sprint
     MAGE = {45438,66,1953}, -- Ice Block, Invisibility, Blink
     DRUID = {22812,61336,22842}, -- Barkskin, Survival Instincts, Frenzied Regeneration
-    PALADIN = {642,498,633,1022,31884}, -- Divine Shield, Divine Protection, Lay on Hands, Hand of Protection, Avenging Wrath
+    PALADIN = {642,498,633,1022,31884,853}, -- Divine Shield, Divine Protection, Lay on Hands, Hand of Protection, Avenging Wrath, Hammer of Justice
     HUNTER = {5384,19263,781}, -- Feign Death, Deterrence, Disengage
     WARLOCK = {18708,47891}, -- Fel Domination, Shadow Ward
     PRIEST = {47585,33206,586,8122}, -- Dispersion, Pain Suppression, Fade, Psychic Scream
@@ -367,8 +545,9 @@ function H.BuildUtilities()
   }
   local spellList = cdsByClass[class] or {}
   local buttons = {}
-  local anchorY = -46 -- place below potion/hearth row
-  local anchorParent = H.bars and H.bars.combo or UIParent
+  -- Place class cooldowns near the utility row at the bottom
+  local anchorParent = H.utilRow or (H.bars and (H.bars.pow or H.bars.combo)) or UIParent
+  local anchorY = -8
   local startX = -((#spellList * 30) / 2) + 15
   local function IsKnown(id)
     -- Direct APIs first
@@ -492,6 +671,14 @@ function H.BuildUtilities()
   AddRacial()
   H.classCDButtons = buttons
 
+  -- Place mana potion button with class cooldown row (rightmost position)
+  if H.manaBtn then
+    local idx = (#(H.classCDButtons or {})) + 1
+    local parent = anchorParent
+    H.manaBtn:ClearAllPoints()
+    H.manaBtn:SetPoint("TOP", parent, "BOTTOM", startX + (idx-1)*32, anchorY)
+  end
+
   -- Emergency CD configuration (pulsing border when ready & HP below threshold)
   HardcoreHUDDB.emergency = HardcoreHUDDB.emergency or { enabled = true, hpThreshold = 0.50 }
   local EMERGENCY_SPELLS = {
@@ -545,6 +732,10 @@ function H.BuildUtilities()
         end
         -- Emergency pulse logic
         if HardcoreHUDDB.emergency and HardcoreHUDDB.emergency.enabled and EMERGENCY_SPELLS[b.spellID] then
+          -- Suppress emergency pulse when dead or a ghost
+          if (UnitIsDead and UnitIsDead("player")) or (UnitIsGhost and UnitIsGhost("player")) then
+            if b._pulseBorder then b._pulseBorder:Hide() end
+          else
           local hp = UnitHealth("player") or 0
             local hpMax = UnitHealthMax("player") or 1
             local ratio = hpMax>0 and (hp/hpMax) or 1
@@ -569,6 +760,7 @@ function H.BuildUtilities()
             else
               if b._pulseBorder then b._pulseBorder:Hide() end
             end
+          end
         end
       end
       -- Potion cooldown (spiral + dim + big number)
@@ -736,6 +928,71 @@ function H.BuildUtilities()
   end
 end
 
+-- Reposition and re-show utility row after layout or level-up changes
+function H.ReanchorUtilities()
+  if not H.potionBtn or not H.bandageBtn or not H.hearthBtn then return end
+  local p, bdg, hs = H.potionBtn, H.bandageBtn, H.hearthBtn
+  -- Anchor relative to player power/combo bars if available
+  if H.bars and H.bars.combo then
+    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.combo, "BOTTOM", -20, -8)
+    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -52, -8)
+    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 20, -8)
+  elseif H.bars and H.bars.pow then
+    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.pow, "BOTTOM", -20, -8)
+    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -52, -8)
+    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 20, -8)
+  else
+    p:ClearAllPoints(); p:SetPoint("CENTER", UIParent, "CENTER", -20, -40)
+    bdg:ClearAllPoints(); bdg:SetPoint("CENTER", UIParent, "CENTER", -72, -40)
+    hs:ClearAllPoints(); hs:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
+  end
+  -- Ensure visible
+  p:Show(); bdg:Show(); hs:Show()
+end
+
+-- Auto-reanchor utilities on common rebuild events
+do
+  local rf = CreateFrame("Frame")
+  rf:RegisterEvent("PLAYER_LEVEL_UP")
+  rf:RegisterEvent("PLAYER_ENTERING_WORLD")
+  rf:RegisterEvent("SPELLS_CHANGED")
+  rf:SetScript("OnEvent", function()
+    if H.ReanchorUtilities then H.ReanchorUtilities() end
+  end)
+end
+
+-- Disable mouse on HUD bars so camera drag isn’t blocked when locked
+function H.SetHUDMouseEnabled(isLocked)
+  -- When locked: disable mouse on non-interactive HUD bars; keep utility buttons clickable
+  local enableBarsMouse = not isLocked
+  if H.bars then
+    if H.bars.hp and H.bars.hp.EnableMouse then H.bars.hp:EnableMouse(enableBarsMouse) end
+    if H.bars.pow and H.bars.pow.EnableMouse then H.bars.pow:EnableMouse(enableBarsMouse) end
+    if H.bars.targetHP and H.bars.targetHP.EnableMouse then H.bars.targetHP:EnableMouse(enableBarsMouse) end
+    if H.bars.targetPow and H.bars.targetPow.EnableMouse then H.bars.targetPow:EnableMouse(enableBarsMouse) end
+    if H.bars.fs and H.bars.fs.EnableMouse then H.bars.fs:EnableMouse(enableBarsMouse) end
+    if H.bars.tick and H.bars.tick.EnableMouse then H.bars.tick:EnableMouse(enableBarsMouse) end
+  end
+  -- Utility buttons should remain clickable; do not disable
+  -- H.potionBtn, H.manaBtn, H.bandageBtn, H.hearthBtn remain enabled
+end
+
+-- Apply initial mouse behavior on login and after bars are built
+do
+  local mFrame = CreateFrame("Frame")
+  mFrame:RegisterEvent("PLAYER_LOGIN")
+  mFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+  mFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+  mFrame:RegisterEvent("UNIT_TARGET")
+  mFrame:SetScript("OnEvent", function()
+    local locked = HardcoreHUDDB and HardcoreHUDDB.lock -- use unified 'lock' key
+    -- Prefer centralized lock application in Core if present
+    if H.ApplyLock then H.ApplyLock() else
+      if H.SetHUDMouseEnabled then H.SetHUDMouseEnabled(locked and true or false) end
+    end
+  end)
+end
+
 -- ================= Buff / Consumable Reminders ===================
 -- English-only client support
 local reminderCategories = {
@@ -757,6 +1014,9 @@ local reminderCategories = {
       "fortitude",
       "mark of the wild", "gift of the wild",
       "blessing of kings",
+      "inner fire",
+      -- Added core priest spirit buff (enUS + deDE)
+      "divine spirit", "göttlicher wille",
     }
   },
 }
@@ -1108,12 +1368,17 @@ local function MissingCategories()
       -- 1 Discipline, 2 Holy, 3 Shadow
       table.insert(buffs, "Power Word: Fortitude")
       if treeIdx ~= 3 then table.insert(buffs, "Inner Fire") end
+      table.insert(buffs, "Divine Spirit")
     elseif class == "DRUID" then
       -- 1 Balance, 2 Feral, 3 Restoration
       table.insert(buffs, "Mark of the Wild")
       if treeIdx == 2 then table.insert(buffs, "Thorns") end
     elseif class == "MAGE" then
       table.insert(buffs, "Arcane Intellect")
+      -- Prefer Mage Armor; fallback to Ice/Frost Armor
+      table.insert(buffs, "Mage Armor")
+      table.insert(buffs, "Ice Armor")
+      table.insert(buffs, "Frost Armor")
     elseif class == "HUNTER" then
       table.insert(buffs, "Aspect") -- any Aspect
     elseif class == "WARLOCK" then
@@ -1435,11 +1700,11 @@ function H.InitReminders()
       if class == "PALADIN" then
         return has("Righteous Fury") or has("Blessing of Sanctuary") or has("Blessing of Kings")
       elseif class == "PRIEST" then
-        return has("Power Word: Fortitude") or has("Inner Fire")
+        return has("Power Word: Fortitude") or has("Inner Fire") or has("Divine Spirit") or has("Göttlicher Wille")
       elseif class == "DRUID" then
         return has("Mark of the Wild") or has("Gift of the Wild") or has("Thorns")
       elseif class == "MAGE" then
-        return has("Arcane Intellect")
+        return has("Arcane Intellect") or has("Mage Armor") or has("Ice Armor") or has("Frost Armor")
       elseif class == "WARRIOR" then
         return has("Battle Shout")
       elseif class == "SHAMAN" then
@@ -1478,6 +1743,7 @@ function H.InitReminders()
       local present = PlayerBuffNames()
       if not PresentHasAnyPattern(present, "Power Word: Fortitude") then AddSpellIfKnown("Power Word: Fortitude"); coreAdded = coreAdded + 1 end
       if not PresentHasAnyPattern(present, "Inner Fire") then AddSpellIfKnown("Inner Fire"); coreAdded = coreAdded + 1 end
+      if not PresentHasAnyPattern(present, "Divine Spirit") and not PresentHasAnyPattern(present, "Göttlicher Wille") then AddSpellIfKnown("Divine Spirit"); coreAdded = coreAdded + 1 end
     elseif class == "DRUID" and (cats.survival ~= false) then
       local present = PlayerBuffNames()
       if not PresentHasAnyPattern(present, "Mark of the Wild") and not PresentHasAnyPattern(present, "Gift of the Wild") then AddSpellIfKnown("Mark of the Wild"); coreAdded = coreAdded + 1 end
@@ -1485,6 +1751,16 @@ function H.InitReminders()
     elseif class == "MAGE" and (cats.survival ~= false) then
       local present = PlayerBuffNames()
       if not PresentHasAnyPattern(present, "Arcane Intellect") then AddSpellIfKnown("Arcane Intellect"); coreAdded = coreAdded + 1 end
+      if not PresentHasAnyPattern(present, "Mage Armor") and not PresentHasAnyPattern(present, "Ice Armor") and not PresentHasAnyPattern(present, "Frost Armor")
+         and not PresentHasAnyPattern(present, "Magierüstung") and not PresentHasAnyPattern(present, "Eisrüstung") and not PresentHasAnyPattern(present, "Frostrüstung") then
+        if GetSpellInfo("Mage Armor") then
+          AddSpellIfKnown("Mage Armor"); coreAdded = coreAdded + 1
+        elseif GetSpellInfo("Ice Armor") then
+          AddSpellIfKnown("Ice Armor"); coreAdded = coreAdded + 1
+        elseif GetSpellInfo("Frost Armor") then
+          AddSpellIfKnown("Frost Armor"); coreAdded = coreAdded + 1
+        end
+      end
     elseif class == "WARRIOR" and (cats.survival ~= false) then
       local present = PlayerBuffNames()
       if not PresentHasAnyPattern(present, "Battle Shout") then AddSpellIfKnown("Battle Shout"); coreAdded = coreAdded + 1 end
@@ -1504,7 +1780,7 @@ function H.InitReminders()
       elseif class == "DRUID" then
         AddSpellIfKnown("Mark of the Wild"); AddSpellIfKnown("Thorns")
       elseif class == "MAGE" then
-        AddSpellIfKnown("Arcane Intellect")
+        AddSpellIfKnown("Arcane Intellect"); AddSpellIfKnown("Mage Armor")
       elseif class == "WARRIOR" then
         AddSpellIfKnown("Battle Shout")
       elseif class == "SHAMAN" then
