@@ -71,8 +71,7 @@ local function buildWindow()
   H.zonesFrame = f
   f:SetSize(360, 420)
   f:SetPoint("CENTER")
-  f:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=6,right=6,top=6,bottom=6} })
-  f:SetBackdropColor(0,0,0,0.85)
+  H.SafeBackdrop(f, { bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=6,right=6,top=6,bottom=6} }, 0,0,0,0.85)
   f:Hide()
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")

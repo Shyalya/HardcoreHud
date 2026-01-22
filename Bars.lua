@@ -7,6 +7,22 @@ local MANA_TICK = 2
 local bars = {}
 H.bars = bars
 
+-- Safe power accessor: prefer `UnitPower` API, fall back to classic `UnitMana`/`UnitEnergy`/`UnitRage` when needed
+local function GetUnitPowerAndMax(unit, pType)
+  pType = pType or 0
+  if UnitPower and UnitPowerMax then
+    return (UnitPower(unit, pType) or 0), (UnitPowerMax(unit, pType) or 0)
+  end
+  if pType == 0 then
+    if UnitMana and UnitManaMax then return (UnitMana(unit) or 0), (UnitManaMax(unit) or 0) end
+  elseif pType == 1 then
+    if UnitRage then return (UnitRage(unit) or 0), 100 end
+  elseif pType == 3 then
+    if UnitEnergy then return (UnitEnergy(unit) or 0), 100 end
+  end
+  return 0, 100
+end
+
 local function attachDrag(frame)
   if not frame then return end
   frame:EnableMouse(true)
@@ -24,9 +40,7 @@ local function attachDrag(frame)
 end
 
 local function border(frame)
-  frame:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=3,right=3,top=3,bottom=3} })
-  frame:SetBackdropColor(0,0,0,0.5)
-  frame:SetBackdropBorderColor(0.6,0.6,0.6,1)
+  H.SafeBackdrop(frame, { bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=3,right=3,top=3,bottom=3} }, 0,0,0,0.5)
 end
 
 local function getBarTexture()
@@ -60,7 +74,7 @@ local function IsKnown(id)
   while true do
     local name = GetSpellBookItemName and GetSpellBookItemName(i, BOOKTYPE_SPELL) or nil
     if not name then break end
-    local link = GetSpellLink(i, BOOKTYPE_SPELL)
+    local link = GetSpellLink and GetSpellLink(i, BOOKTYPE_SPELL) or nil
     if link then
       local found = link:match("spell:(%d+)")
       if found and tonumber(found) == id then return true end
@@ -97,6 +111,11 @@ function H.BuildBars()
   hp:SetOrientation("VERTICAL")
   hp:SetSize(barThickness, barHeight)
   hp:SetPoint("RIGHT", root, "CENTER", -separation, centerOffsetY)
+  hp:SetIgnoreParentAlpha(true)
+  -- Override Hide() to keep HP bar always visible
+  local originalHideHp = hp.Hide
+  hp.Hide = function(self) end
+  hp._OriginalHide = originalHideHp
   local hpText = hp:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   bars.hpText = hpText
   hpText:SetPoint("TOP", hp, "BOTTOM", 0, -14)
@@ -112,6 +131,11 @@ function H.BuildBars()
   pow:SetOrientation("VERTICAL")
   pow:SetSize(barThickness, barHeight)
   pow:SetPoint("LEFT", hp, "RIGHT", gap, 0)
+  pow:SetIgnoreParentAlpha(true)
+  -- Override Hide() to keep Power bar always visible
+  local originalHidePow = pow.Hide
+  pow.Hide = function(self) end
+  pow._OriginalHide = originalHidePow
   local powText = pow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   bars.powText = powText
   powText:SetPoint("TOP", pow, "BOTTOM", 0, -18)
@@ -120,8 +144,10 @@ function H.BuildBars()
   -- Overlays on power bar: five-second (top-down) and tick (bottom-up)
   local fsFill = pow:CreateTexture(nil, "OVERLAY")
   bars.fsFill = fsFill
-  local fsAlpha = (HardcoreHUDDB.ticker and HardcoreHUDDB.ticker.fsOpacity) or 0.25
-  fsFill:SetColorTexture(HardcoreHUDDB.colors.fiveSec[1], HardcoreHUDDB.colors.fiveSec[2], HardcoreHUDDB.colors.fiveSec[3], fsAlpha)
+  local fsAlpha = (HardcoreHUDDB and HardcoreHUDDB.ticker and HardcoreHUDDB.ticker.fsOpacity) or 0.25
+  local _colors = (HardcoreHUDDB and HardcoreHUDDB.colors) or { fiveSec = {1,0.8,0}, tick = {0.9,0.9,0.9}, hp = {0,0.8,0}, mana = {0,0.5,1}, energy = {1,0.85,0}, rage = {0.8,0.2,0.2} }
+  local five = (_colors.fiveSec and _colors.fiveSec) or {1,0.8,0}
+  fsFill:SetColorTexture(five[1] or 1, five[2] or 0.8, five[3] or 0, fsAlpha)
   if fsFill.SetBlendMode then fsFill:SetBlendMode("ADD") end
   fsFill:ClearAllPoints()
   fsFill:SetPoint("TOPLEFT", pow, "TOPLEFT")
@@ -131,7 +157,8 @@ function H.BuildBars()
 
   local tickLine = pow:CreateTexture(nil, "OVERLAY")
   bars.tickFill = tickLine
-  tickLine:SetColorTexture(HardcoreHUDDB.colors.tick[1], HardcoreHUDDB.colors.tick[2], HardcoreHUDDB.colors.tick[3], 1.0)
+  local tickc = (_colors.tick and _colors.tick) or {0.9,0.9,0.9}
+  tickLine:SetColorTexture(tickc[1] or 0.9, tickc[2] or 0.9, tickc[3] or 0.9, 1.0)
   tickLine:ClearAllPoints()
   tickLine:SetPoint("BOTTOM", pow, "BOTTOM", 0, 0)
   tickLine:SetSize(pow:GetWidth(), 2)
@@ -220,14 +247,9 @@ function H.BuildBars()
   cds:SetFrameStrata("HIGH")
   cds:SetFrameLevel(root:GetFrameLevel()+40)
   bars.cdIcons = {}
+  -- Class cooldowns now fully handled by Utilities.lua (H.classCDButtons)
+  -- Keep this list empty to avoid duplicate rows here.
   local spells = {}
-  local class = select(2, UnitClass("player"))
-  -- Avoid duplicates: Rogue CDs are provided by Utilities.lua; skip here
-  if class == "ROGUE" then spells = { } -- handled by Utilities
-  elseif class == "DRUID" then spells = { 1850, 22812 } -- Dash, Barkskin
-  elseif class == "WARRIOR" then spells = { 871, 1719 } -- Shield Wall, Recklessness
-  elseif class == "MAGE" then spells = { 45438, 120 } -- Ice Block, Cone of Cold placeholder
-  end
   local x = 0
   for i,id in ipairs(spells) do
     local name, _, icon = GetSpellInfo(id)
@@ -329,31 +351,28 @@ local energyCycle = 0
 local hpPulseAcc = 0
 
 function H.UpdateBarColors()
-  local pType = UnitPowerType("player")
+  -- Defensive: ensure color tables exist and are numeric; fall back to defaults
+  local colors = HardcoreHUDDB and HardcoreHUDDB.colors
+  local hpCol = (colors and colors.hp) or {0, 0.8, 0}
+  local manaCol = (colors and colors.mana) or {0, 0.5, 1}
+  local energyCol = (colors and colors.energy) or {1, 0.85, 0}
+  local rageCol = (colors and colors.rage) or {0.8, 0.2, 0.2}
+  local tickCol = (colors and colors.tick) or {0.9, 0.9, 0.9}
+  local pType = UnitPowerType and UnitPowerType("player") or 0
   local r,g,b
-  if pType == 0 then r,g,b = unpack(HardcoreHUDDB.colors.mana)
-  elseif pType == 1 then r,g,b = unpack(HardcoreHUDDB.colors.rage)
-  elseif pType == 3 then r,g,b = unpack(HardcoreHUDDB.colors.energy)
+  if pType == 0 then r,g,b = unpack(manaCol)
+  elseif pType == 1 then r,g,b = unpack(rageCol)
+  elseif pType == 3 then r,g,b = unpack(energyCol)
   else r,g,b = 0.7,0.7,0.7 end
-  bars.pow:SetStatusBarColor(r,g,b)
-  local hr,hg,hb = unpack(HardcoreHUDDB.colors.hp)
-  bars.hp:SetStatusBarColor(hr,hg,hb)
-  bars.tick:SetStatusBarColor(unpack(HardcoreHUDDB.colors.tick))
+  if bars.pow and bars.pow.SetStatusBarColor then bars.pow:SetStatusBarColor(r or 0, g or 0, b or 0) end
+  local hr,hg,hb = unpack(hpCol)
+  if bars.hp and bars.hp.SetStatusBarColor then bars.hp:SetStatusBarColor(hr or 0, hg or 0, hb or 0) end
+  if bars.tick and bars.tick.SetStatusBarColor then bars.tick:SetStatusBarColor(unpack(tickCol)) end
 end
 
 function H.UpdatePower()
   local pType = UnitPowerType("player")
-  local cur, max
-  if pType == 0 then
-    cur = UnitMana("player"); max = UnitManaMax("player")
-  elseif pType == 1 then
-    cur = UnitPower("player",1); max = UnitPowerMax("player",1)
-  elseif pType == 3 then
-      cur = UnitPower("player",3); max = UnitPowerMax("player",3)
-  else
-    -- fallback for other types
-    cur = UnitPower("player") or 0; max = UnitPowerMax("player") or 100
-  end
+  local cur, max = GetUnitPowerAndMax("player", pType)
   bars.pow:SetMinMaxValues(0, max or 1)
   bars.pow:SetValue(cur or 0)
   bars.powText:SetText((cur or 0).."/"..(max or 0))
@@ -371,20 +390,20 @@ function H.UpdatePower()
   -- overlay visibility
   local ph = H.bars.pow:GetHeight()
   if pType == 0 then
-    if inFive then bars.fsFill:Show() else bars.fsFill:Hide() end
+    if inFive then pcall(function() bars.fsFill:Show() end) else pcall(function() bars.fsFill:Hide() end) end
     if cur == UnitPowerMax("player",0) then
       manaPaused=true; haveManaCycle=false;
-      if bars.tickFill then bars.tickFill:Hide() end
+      if bars.tickFill then pcall(function() bars.tickFill:Hide() end) end
     else
-      if bars.tickFill then bars.tickFill:Show() end
+      if bars.tickFill then pcall(function() bars.tickFill:Show() end) end
     end
   elseif pType == 3 then
     -- switching to energy: clear mana state and show tick overlay
-    bars.fsFill:Hide()
+    pcall(function() bars.fsFill:Hide() end)
     manaPaused = true; haveManaCycle = false
-    if bars.tickFill then bars.tickFill:Show() end
+    if bars.tickFill then pcall(function() bars.tickFill:Show() end) end
   else
-    bars.fsFill:Hide(); if bars.tickFill then bars.tickFill:SetHeight(0) end
+    pcall(function() bars.fsFill:Hide() end); if bars.tickFill then bars.tickFill:SetHeight(0) end
   end
 end
 
@@ -433,16 +452,7 @@ function H.UpdateHealth()
     bars.targetHP:SetValue(tcur)
     bars.targetHPText:SetText((tcur or 0).."/"..(UnitHealthMax("target") or 0))
     local tpType = UnitPowerType("target")
-    local tcurPow, tmaxPow
-    if tpType == 0 then
-      tcurPow = UnitMana("target"); tmaxPow = UnitManaMax("target")
-    elseif tpType == 1 then
-      tcurPow = UnitPower("target",1); tmaxPow = UnitPowerMax("target",1)
-    elseif tpType == 3 then
-      tcurPow = UnitPower("target",3); tmaxPow = UnitPowerMax("target",3)
-    else
-      tcurPow = UnitPower("target") or 0; tmaxPow = UnitPowerMax("target") or 100
-    end
+    local tcurPow, tmaxPow = GetUnitPowerAndMax("target", tpType)
     bars.targetPow:SetMinMaxValues(0, tmaxPow or 1)
     bars.targetPow:SetValue(tcurPow or 0)
     bars.targetPowText:SetText((tcurPow or 0).."/"..(tmaxPow or 0))
@@ -460,25 +470,35 @@ function H.UpdateHealth()
 end
 
 function H.UpdateTarget()
+  -- Skip visibility updates during combat
+  if InCombatLockdown() then
+    return
+  end
+  
   -- combo points
   local class = select(2, UnitClass("player"))
   local pType = UnitPowerType("player")
   local isCat = class == "DRUID" and pType == 3
   local show = class == "ROGUE" or isCat
-  if show then
-    local cp = GetComboPoints("player", "target") or 0
+  local comboIcons = bars and bars.comboIcons
+  if show and comboIcons then
+    local cp = GetComboPoints and GetComboPoints("player", "target") or 0
     for i=1,5 do
-      local t = bars.comboIcons[i]
-      t:Show()
-      if cp>0 and i<=cp then
-        local ratio = (i-1)/4
-        t:SetColorTexture(1 - ratio, ratio, 0, 1)
-      else
-        t:SetColorTexture(0.35,0.35,0.35,0.7)
+      local t = comboIcons[i]
+      if t then
+        t:Show()
+        if cp>0 and i<=cp then
+          local ratio = (i-1)/4
+          if t.SetColorTexture then t:SetColorTexture(1 - ratio, ratio, 0, 1) end
+        else
+          if t.SetColorTexture then t:SetColorTexture(0.35,0.35,0.35,0.7) end
+        end
       end
     end
   else
-    for i=1,5 do bars.comboIcons[i]:Hide() end
+    if comboIcons then
+      for i=1,5 do if comboIcons[i] and comboIcons[i].Hide then pcall(function() comboIcons[i]:Hide() end) end end
+    end
   end
   -- skull warning (guard if Combat.lua not yet loaded)
   if H.CheckSkull then H.CheckSkull() end
@@ -486,6 +506,8 @@ function H.UpdateTarget()
   -- target bars
   if UnitExists("target") and bars.targetHP and bars.targetPow then
     bars.targetHP:Show(); bars.targetPow:Show(); bars.targetHP:SetAlpha(1); bars.targetPow:SetAlpha(1)
+    if bars.targetHP._thinBorder then for _,t in pairs(bars.targetHP._thinBorder) do if t and t.Show then t:Show() end end end
+    if bars.targetPow._thinBorder then for _,t in pairs(bars.targetPow._thinBorder) do if t and t.Show then t:Show() end end end
     -- color by reaction: red hostile, yellow neutral, green friendly
     local reaction = UnitReaction("player","target")
     local tr, tg, tb = 1, 0, 0 -- default red
@@ -515,16 +537,7 @@ function H.UpdateTarget()
     bars.targetHP:SetValue(tcur)
     if bars.targetHPText then bars.targetHPText:SetText(tcur.."/"..(UnitHealthMax("target") or 0)) end
     local tpType = UnitPowerType("target")
-    local tcurPow, tmaxPow
-    if tpType == 0 then
-      tcurPow = UnitMana("target"); tmaxPow = UnitManaMax("target")
-    elseif tpType == 1 then
-      tcurPow = UnitPower("target",1); tmaxPow = UnitPowerMax("target",1)
-    elseif tpType == 3 then
-        tcurPow = UnitPower("target",3); tmaxPow = UnitPowerMax("target",3)
-    else
-      tcurPow = UnitPower("target") or 0; tmaxPow = UnitPowerMax("target") or 100
-    end
+    local tcurPow, tmaxPow = GetUnitPowerAndMax("target", tpType)
     bars.targetPow:SetMinMaxValues(0, tmaxPow or 1)
     local tpcur = tcurPow or 0
     bars.targetPow:SetValue(tpcur)
@@ -541,8 +554,18 @@ function H.UpdateTarget()
       end
     end
   else
-    if bars.targetHP then bars.targetHP:Hide() end
-    if bars.targetPow then bars.targetPow:Hide() end
+    if bars.targetHP then
+      pcall(function() bars.targetHP:Hide() end)
+      if bars.targetHP._thinBorder then
+        for _,t in pairs(bars.targetHP._thinBorder) do if t and t.Hide then pcall(function() t:Hide() end) end end
+      end
+    end
+    if bars.targetPow then
+      pcall(function() bars.targetPow:Hide() end)
+      if bars.targetPow._thinBorder then
+        for _,t in pairs(bars.targetPow._thinBorder) do if t and t.Hide then pcall(function() t:Hide() end) end end
+      end
+    end
   end
 end
 
@@ -555,31 +578,21 @@ driver:SetScript("OnUpdate", function(_, dt)
   local pType = UnitPowerType("player")
   -- live power refresh to ensure energy updates immediately
   do
-    local cur, max
-    if pType == 0 then
-      cur = UnitMana("player"); max = UnitManaMax("player")
-    elseif pType == 1 then
-      cur = UnitPower("player",1); max = UnitPowerMax("player",1)
-    elseif pType == 3 then
-      cur = UnitPower("player",3); max = UnitPowerMax("player",3)
-    else
-      cur = UnitPower("player") or 0; max = UnitPowerMax("player") or 100
-    end
+    local cur, max = GetUnitPowerAndMax("player", pType)
     if bars.pow then
       bars.pow:SetMinMaxValues(0, max or 1)
       bars.pow:SetValue(cur or 0)
       if bars.powText then bars.powText:SetText((cur or 0).."/"..(max or 0)) end
     end
   end
-  local curMana = UnitPower("player",0)
-  local maxMana = UnitPowerMax("player",0)
+  local curMana, maxMana = GetUnitPowerAndMax("player", 0)
   -- five second rule
   if pType == 0 and inFive then
     local rem = FIVE - (now - lastManaCast)
-    if rem <= 0 then inFive=false; bars.fsFill:Hide(); manaPaused = (curMana==maxMana); haveManaCycle=false else
+    if rem <= 0 then inFive=false; pcall(function() bars.fsFill:Hide() end); manaPaused = (curMana==maxMana); haveManaCycle=false else
       local h = H.bars.pow:GetHeight() * (rem / FIVE)
       bars.fsFill:SetHeight(h)
-      bars.fsFill:Show()
+      pcall(function() bars.fsFill:Show() end)
     end
   end
   -- mana tick detection
@@ -641,12 +654,12 @@ driver:SetScript("OnUpdate", function(_, dt)
             end
             local pulseA = 0.35 + 0.35 * math.abs(math.sin(now*6))
             info.btn._pulseBorder:SetAlpha(pulseA)
-            info.btn._pulseBorder:Show()
+            pcall(function() info.btn._pulseBorder:Show() end)
           else
-            if info.btn._pulseBorder then info.btn._pulseBorder:Hide() end
+            if info.btn._pulseBorder then pcall(function() info.btn._pulseBorder:Hide() end) end
           end
         else
-          if info.btn._pulseBorder then info.btn._pulseBorder:Hide() end
+          if info.btn._pulseBorder then pcall(function() info.btn._pulseBorder:Hide() end) end
         end
       end
     end
@@ -720,4 +733,261 @@ do
       preCastMana = UnitPower("player",0) or preCastMana
     end
   end)
+end
+
+-- Leveling Progress Tracker
+function H.InitLevelingTracker()
+  if H.levelingTracker then return end
+  
+  HardcoreHUDDB.leveling = HardcoreHUDDB.leveling or {
+    enabled = true,
+    showXPBar = true,
+    showRate = true,
+    showTimeToLevel = true,
+    showRested = true,
+    showSessionTime = true,
+    fontSize = 11,
+    pos = { x = 0, y = -350 }
+  }
+  
+  local f = CreateFrame("Frame", "HardcoreHUDLevelingTracker", UIParent)
+  H.levelingTracker = f
+  f:SetSize(320, 65)
+  f:SetPoint("CENTER", UIParent, "CENTER", HardcoreHUDDB.leveling.pos.x or 0, HardcoreHUDDB.leveling.pos.y or -400)
+  f:SetFrameStrata("HIGH")
+  f:Hide()
+  
+  -- Simple background - minimal
+  local bg = f:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints(f)
+  bg:SetColorTexture(0, 0, 0, 0)  -- Transparent
+  
+  -- Title
+  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  title:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -2)
+  title:SetText("LEVELING")
+  title:SetTextColor(0.2, 0.8, 1, 1)
+  if STANDARD_TEXT_FONT then title:SetFont(STANDARD_TEXT_FONT, 12, "OUTLINE") end
+  f.title = title
+  
+  -- Level text (on right)
+  local levelText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  levelText:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, -2)
+  levelText:SetText("Level: 1")
+  levelText:SetTextColor(1, 0.84, 0, 1)
+  if STANDARD_TEXT_FONT then levelText:SetFont(STANDARD_TEXT_FONT, 12, "OUTLINE") end
+  f.levelText = levelText
+  
+  -- XP Bar (clean and simple)
+  local xpBar = CreateFrame("StatusBar", nil, f)
+  xpBar:SetSize(320, 12)
+  xpBar:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -20)
+  xpBar:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
+  xpBar:SetMinMaxValues(0, 100)
+  xpBar:SetValue(50)
+  xpBar:SetStatusBarColor(0.1, 0.6, 1, 0.9)
+  
+  -- XP Bar background
+  local xpBg = xpBar:CreateTexture(nil, "BACKGROUND")
+  xpBg:SetAllPoints(xpBar)
+  xpBg:SetColorTexture(0.05, 0.05, 0.08, 0.9)
+  f.xpBar = xpBar
+  
+  -- Rested XP overlay (orange texture)
+  local restedOverlay = xpBar:CreateTexture(nil, "OVERLAY")
+  restedOverlay:SetTexture("Interface/TargetingFrame/UI-StatusBar")
+  restedOverlay:SetTexCoord(0, 1, 0, 1)  -- Prevent texture stretching
+  restedOverlay:SetVertexColor(1.0, 0.5, 0.0, 0.7)  -- Orange
+  restedOverlay:Hide()
+  f.restedOverlay = restedOverlay
+  
+  -- Quest XP overlay (green texture)
+  local questOverlay = xpBar:CreateTexture(nil, "OVERLAY")
+  questOverlay:SetTexture("Interface/TargetingFrame/UI-StatusBar")
+  questOverlay:SetTexCoord(0, 1, 0, 1)  -- Prevent texture stretching
+  questOverlay:SetVertexColor(0.0, 1.0, 0.3, 0.6)  -- Green
+  questOverlay:Hide()
+  f.questOverlay = questOverlay
+  
+  -- XP Text (on bar)
+  local xpText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  xpText:SetPoint("CENTER", xpBar, "CENTER", 0, 0)
+  xpText:SetText("50%")
+  xpText:SetTextColor(1, 1, 1, 1)
+  if STANDARD_TEXT_FONT then xpText:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE") end
+  xpText:SetShadowColor(0, 0, 0, 0.8)
+  xpText:SetShadowOffset(1, -1)
+  f.xpText = xpText
+  
+  -- Info line (Session time)
+  local info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  info:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -38)
+  info:SetText("Session: 0h 0m  |  Rested: 0%")
+  info:SetTextColor(0.7, 0.9, 1, 0.8)
+  local fontSize = HardcoreHUDDB.leveling.fontSize or 11
+  if STANDARD_TEXT_FONT then info:SetFont(STANDARD_TEXT_FONT, fontSize, "") end
+  f.info = info
+  
+  -- Make draggable
+  local function onDragStart(self)
+    if not HardcoreHUDDB.leveling.locked then
+      self:StartMoving()
+    end
+  end
+  
+  local function onDragStop(self)
+    self:StopMovingOrSizing()
+    local x, y = self:GetCenter()
+    local px, py = UIParent:GetCenter()
+    HardcoreHUDDB.leveling.pos.x = x - px
+    HardcoreHUDDB.leveling.pos.y = y - py
+  end
+  
+  f:SetMovable(true)
+  f:SetUserPlaced(false)
+  f:SetScript("OnMouseDown", onDragStart)
+  f:SetScript("OnMouseUp", onDragStop)
+  
+  -- Update thread
+  if not H._levelingUpdateFrame then
+    local uf = CreateFrame("Frame")
+    H._levelingUpdateFrame = uf
+    local acc = 0
+    uf:SetScript("OnUpdate", function(_, dt)
+      acc = acc + dt
+      if acc >= 0.5 then
+        acc = 0
+        H.UpdateLevelingTracker()
+      end
+    end)
+  end
+end
+
+function H.UpdateLevelingTracker()
+  if not H.levelingTracker then return end
+  if not HardcoreHUDDB.leveling.enabled then H.levelingTracker:Hide() return end
+  
+  local f = H.levelingTracker
+  local level = UnitLevel("player")
+  local xpCurrent = UnitXP("player") or 0
+  local xpMax = UnitXPMax("player") or 1
+  local xpPercent = (xpCurrent / xpMax) * 100
+  
+  f:Show()
+  
+  -- Level
+  f.levelText:SetText(string.format("Level: %d", level))
+  
+  -- XP Bar - show/hide based on option
+  local opts = HardcoreHUDDB.leveling
+  if opts.showXPBar ~= false then
+    -- Calculate completed quest XP
+    local questXP = 0
+    local numEntries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
+    for i = 1, numEntries do
+      local title, level, tag, isHeader, isCollapsed, isComplete = GetQuestLogTitle(i)
+      if not isHeader and isComplete and isComplete > 0 then
+        if SelectQuestLogEntry then SelectQuestLogEntry(i) end
+        local xp = GetQuestLogRewardXP and GetQuestLogRewardXP() or 0
+        questXP = questXP + xp
+      end
+    end
+    
+    -- Set main XP bar (blue)
+    f.xpBar:SetValue(xpPercent)
+    f.xpBar:SetStatusBarColor(0.1, 0.6, 1, 0.9)
+    
+    -- Calculate positions for overlays based on bar dimensions
+    local barWidth = 320  -- XP bar width from creation
+    local barHeight = 12
+    
+    -- Hide rested XP overlay (not used)
+    f.restedOverlay:Hide()
+    
+    -- Quest XP overlay (green) - starts where current XP ends
+    local questPercent = math.min((questXP / xpMax) * 100, 100 - xpPercent)
+    local questStartX = (xpPercent / 100) * barWidth
+    local questWidth = (questPercent / 100) * barWidth
+    
+    if questXP > 0 and questPercent > 0 and questWidth > 1 then
+      f.questOverlay:ClearAllPoints()
+      f.questOverlay:SetPoint("LEFT", f.xpBar, "LEFT", questStartX, 0)
+      f.questOverlay:SetSize(questWidth, barHeight)
+      f.questOverlay:Show()
+    else
+      f.questOverlay:Hide()
+    end
+    
+    f.xpText:SetText(string.format("%.0f%%", xpPercent))
+    f.xpBar:Show()
+    f.xpText:Show()
+  else
+    f.xpBar:Hide()
+    f.restedOverlay:Hide()
+    f.questOverlay:Hide()
+    f.xpText:Hide()
+  end
+  
+  -- Build info text based on enabled options
+  local infoLines = {}
+  
+  -- Session time
+  if opts.showSessionTime ~= false then
+    local sessionTime = GetTime() - (H._sessionStartTime or GetTime())
+    local sHours = math.floor(sessionTime / 3600)
+    local sMins = math.floor((sessionTime % 3600) / 60)
+    table.insert(infoLines, string.format("Session: %dh %dm", sHours, sMins))
+  end
+  
+  -- Rested XP
+  if opts.showRested ~= false then
+    local restedXP = (GetXPExhaustion() or 0) / xpMax * 100
+    table.insert(infoLines, string.format("Rested: %.0f%%", restedXP))
+  end
+  
+  -- XP Rate
+  if opts.showRate ~= false then
+    local elapsed = GetTime() - (H._sessionStartTime or GetTime())
+    if elapsed > 0 then
+      local xpPerHour = (xpCurrent / elapsed) * 3600
+      table.insert(infoLines, string.format("Rate: %.0f/h", xpPerHour))
+    end
+  end
+  
+  -- Time to Level
+  if opts.showTimeToLevel ~= false then
+    local elapsed = GetTime() - (H._sessionStartTime or GetTime())
+    if elapsed > 0 and xpCurrent > 0 then
+      local xpPerSecond = xpCurrent / elapsed
+      local remainingXP = xpMax - xpCurrent
+      local secondsToLevel = remainingXP / xpPerSecond
+      local hours = math.floor(secondsToLevel / 3600)
+      local mins = math.floor((secondsToLevel % 3600) / 60)
+      if hours > 0 then
+        table.insert(infoLines, string.format("TTL: %dh %dm", hours, mins))
+      else
+        table.insert(infoLines, string.format("TTL: %dm", mins))
+      end
+    end
+  end
+  
+  -- Show/hide info line based on whether there's content
+  if #infoLines > 0 then
+    f.info:SetText(table.concat(infoLines, "  |  "))
+    f.info:Show()
+  else
+    f.info:Hide()
+  end
+end
+
+function H.ToggleLevelingTracker()
+  if not H.levelingTracker then H.InitLevelingTracker() end
+  if H.levelingTracker:IsShown() then
+    H.levelingTracker:Hide()
+    HardcoreHUDDB.leveling.enabled = false
+  else
+    H.levelingTracker:Show()
+    HardcoreHUDDB.leveling.enabled = true
+    H.UpdateLevelingTracker()
+  end
 end

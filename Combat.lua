@@ -1,4 +1,5 @@
 local H = HardcoreHUD
+local rc = LibStub("LibRangeCheck-3.0", true)  -- Get LibRangeCheck library
 
 -- Critical HP warning
 function H.BuildWarnings()
@@ -109,6 +110,128 @@ function H.BuildWarnings()
   perf.text = ptxt
   perf:Hide()
   H.perfWarn = perf
+
+  -- Leash warning overlay (distance to target/enemy with timer)
+  HardcoreHUDDB.warnings.leash = HardcoreHUDDB.warnings.leash or { enabled = true, distance = 31, sound = true, locked = false }
+  if not HardcoreHUDDB.warnings.leash.pos then
+    HardcoreHUDDB.warnings.leash.pos = { x = 0, y = 80 }
+  end
+  local leashFrame = CreateFrame("Frame", nil, UIParent)
+  H.leashWarn = leashFrame
+  leashFrame:SetSize(340, 80)
+  local pos = HardcoreHUDDB.warnings.leash.pos
+  leashFrame:SetPoint("CENTER", UIParent, "CENTER", pos.x, pos.y)
+  leashFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+  leashFrame:Hide()
+  
+  -- Make draggable
+  leashFrame:SetMovable(true)
+  leashFrame:EnableMouse(true)
+  leashFrame:SetClampedToScreen(true)
+  leashFrame:RegisterForDrag("LeftButton")
+  leashFrame:SetScript("OnDragStart", function(self)
+    if not HardcoreHUDDB.warnings.leash.locked then
+      self:StartMoving()
+    end
+  end)
+  leashFrame:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    local _, _, _, x, y = self:GetPoint()
+    HardcoreHUDDB.warnings.leash.pos = { x = x, y = y }
+  end)
+  
+  -- Title text
+  local leashTitle = leashFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  leashTitle:SetPoint("TOP", leashFrame, "TOP", 0, -5)
+  leashTitle:SetText("LEASH TRACKING")
+  leashTitle:SetTextColor(1, 0.8, 0, 1)
+  if STANDARD_TEXT_FONT then leashTitle:SetFont(STANDARD_TEXT_FONT, 18, "OUTLINE") end
+  leashFrame.title = leashTitle
+  
+  -- Progress bar
+  local leashBar = CreateFrame("StatusBar", nil, leashFrame)
+  leashBar:SetSize(300, 16)
+  leashBar:SetPoint("TOP", leashTitle, "BOTTOM", 0, -8)
+  leashBar:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
+  leashBar:SetMinMaxValues(0, 100)
+  leashBar:SetValue(50)
+  leashBar:SetStatusBarColor(1, 0.5, 0, 1) -- Orange default
+  
+  -- Bar background
+  local barBg = leashBar:CreateTexture(nil, "BACKGROUND")
+  barBg:SetAllPoints(leashBar)
+  barBg:SetColorTexture(0.1, 0.1, 0.1, 0.8)
+  
+  -- Bar border
+  local barBorder = leashBar:CreateTexture(nil, "OVERLAY")
+  barBorder:SetAllPoints(leashBar)
+  barBorder:SetTexture("Interface/Tooltips/UI-Tooltip-Border")
+  barBorder:SetVertexColor(1, 1, 1, 0.5)
+  
+  leashFrame.bar = leashBar
+  
+  -- Stats text (distance + time)
+  local leashStats = leashFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  leashStats:SetPoint("TOP", leashBar, "BOTTOM", 0, -6)
+  leashStats:SetText("31m / 31m | 11s")
+  leashStats:SetTextColor(1, 1, 1, 1)
+  leashFrame.stats = leashStats
+  
+  -- Leash icon
+  local leashIcon = leashFrame:CreateTexture(nil, "ARTWORK")
+  leashIcon:SetSize(32, 32)
+  leashIcon:SetPoint("RIGHT", leashTitle, "LEFT", -12, 0)
+  leashIcon:SetTexture("Interface/Icons/Spell_Misc_Chains")
+  leashFrame.icon = leashIcon
+
+  -- Range Display (simple distance to target)
+  HardcoreHUDDB.warnings.rangeDisplay = HardcoreHUDDB.warnings.rangeDisplay or { enabled = true, fontSize = 24, locked = false }
+  if not HardcoreHUDDB.warnings.rangeDisplay.pos then
+    HardcoreHUDDB.warnings.rangeDisplay.pos = { x = 0, y = -140 }
+  end
+  local rangeFrame = CreateFrame("Frame", nil, UIParent)
+  H.rangeDisplay = rangeFrame
+  rangeFrame:SetSize(120, 50)
+  local pos = HardcoreHUDDB.warnings.rangeDisplay.pos
+  rangeFrame:SetPoint("CENTER", UIParent, "CENTER", pos.x, pos.y)
+  rangeFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+  rangeFrame:Hide()
+  
+  -- Make draggable
+  rangeFrame:SetMovable(true)
+  rangeFrame:EnableMouse(true)
+  rangeFrame:SetClampedToScreen(true)
+  rangeFrame:RegisterForDrag("LeftButton")
+  rangeFrame:SetScript("OnDragStart", function(self)
+    if not HardcoreHUDDB.warnings.rangeDisplay.locked then
+      self:StartMoving()
+    end
+  end)
+  rangeFrame:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    local _, _, _, x, y = self:GetPoint()
+    HardcoreHUDDB.warnings.rangeDisplay.pos = { x = x, y = y }
+  end)
+  
+  -- Range text (big display) - NO BACKGROUND
+  local rangeText = rangeFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  rangeText:SetPoint("CENTER", rangeFrame, "CENTER", 0, 5)
+  rangeText:SetText("-- yd")
+  rangeText:SetTextColor(1, 1, 1, 1)
+  local fontSize = HardcoreHUDDB.warnings.rangeDisplay.fontSize or 24
+  if STANDARD_TEXT_FONT then 
+    rangeText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+  else
+    rangeText:SetFont(GameFontNormal:GetFont(), fontSize, "OUTLINE")
+  end
+  rangeFrame.text = rangeText
+  
+  -- Range label
+  local rangeLabel = rangeFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  rangeLabel:SetPoint("BOTTOM", rangeText, "TOP", 0, 2)
+  rangeLabel:SetText("RANGE")
+  rangeLabel:SetTextColor(0.7, 0.7, 0.7, 1)
+  rangeFrame.label = rangeLabel
 end
 
 -- Centralized spike/TTD visibility helper to honor alwaysShow
@@ -130,6 +253,14 @@ function H.ShowCriticalHPWarning()
       H.HideCriticalHPWarning()
       return
     end
+    
+    -- Suppress critical HP warning in instances (dungeons/raids)
+    local inInstance = IsInInstance and IsInInstance() or false
+    if inInstance then
+      H.HideCriticalHPWarning()
+      return
+    end
+    
     if not H.warnHP then
       local w = CreateFrame("Frame", nil, UIParent)
       w:SetSize(1,1)
@@ -395,6 +526,17 @@ function H.CheckSkull()
   local classif = UnitClassification("target") or ""
   local elite = (classif == "elite" or classif == "rareelite" or classif == "worldboss")
   local high = (lvl >= my + 2)
+  
+  -- Don't show elite warning in groups (elite quests/dungeons are expected)
+  local inGroup = IsInGroup and IsInGroup() or false
+  if inGroup then
+    H.skull:Hide()
+    if H.EliteAttentionText then H.EliteAttentionText:Hide() end
+    if H.eliteTextFrame then H.eliteTextFrame:Hide() end
+    if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Hide() end end
+    return
+  end
+  
   -- Neue Bedingung: nur bei feindlichen Zielen (neutral/freundlich ausgeblendet)
   local reaction = UnitReaction("player","target")
   local hostile = false
@@ -596,4 +738,481 @@ if not H.multiAggroUpdateFrame then
       end
     end
   end)
+end
+
+-- Initialize leash state tracking
+H._leashState = H._leashState or {
+  targetGUID = nil,
+  baseDistance = 31,     -- 31m base leash distance
+  hitDistance = 0,       -- Additional distance from hits during chase
+  lastHitTime = 0,       -- Time of last damaging hit
+  timerStartTime = 0,    -- When 11-second countdown started
+  timerActive = false,   -- Is timer counting down?
+}
+
+-- COMBAT_LOG hook for tracking hits and resetting timer
+local function OnCombatLogEvent(...)
+  local timestamp, eventType, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellID, spellName, spellSchool, amount, overkill, school, resisted, blocked, absorbed, critical, glancing, crushing, isOffHand = ...
+  
+  -- Only track events where player hits target
+  local playerGUID = UnitGUID("player")
+  if sourceGUID ~= playerGUID then return end
+  if destGUID ~= (UnitGUID("target") or nil) then return end
+  
+  -- Filter out DoTs and non-damage events
+  local isDoT = (eventType == "SPELL_PERIODIC_DAMAGE")
+  if isDoT then return end
+  
+  -- Valid hit events: SPELL_DAMAGE, SWING_DAMAGE, RANGE_DAMAGE, etc
+  local validEvents = {
+    SPELL_DAMAGE = true,
+    SWING_DAMAGE = true,
+    RANGE_DAMAGE = true,
+    SPELL_BUILDING = true,
+    SPELL_EXTRA_ATTACKS = true,
+  }
+  
+  if not validEvents[eventType] then return end
+  
+  -- Only count if dealing damage
+  if not amount or amount == 0 then return end
+  
+  -- Reset the 11-second timer
+  H._leashState.lastHitTime = GetTime()
+  H._leashState.timerActive = true
+  H._leashState.timerStartTime = GetTime()
+  
+  -- Track distance increase for this hit
+  local px, py = UnitPosition("player")
+  local tx, ty = UnitPosition("target")
+  if px and tx then
+    local dx = tx - px
+    local dy = ty - py
+    local hitDistance = math.sqrt(dx*dx + dy*dy)
+    -- If hitting from range > 10m, it counts as "hit during chase"
+    if hitDistance > 10 then
+      H._leashState.hitDistance = H._leashState.hitDistance + 2  -- Each hit adds ~2m
+    end
+  end
+end
+
+-- Register combat log event
+local combatLogFrame = CreateFrame("Frame")
+combatLogFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+combatLogFrame:SetScript("OnEvent", function(self, event, ...)
+  OnCombatLogEvent(...)
+end)
+
+function H.CheckLeashDistance()
+  -- Don't interfere with test mode
+  if H._leashTestMode then
+    return
+  end
+  
+  -- Initialize if not set
+  HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
+  HardcoreHUDDB.warnings.leash = HardcoreHUDDB.warnings.leash or { enabled = true, distance = 50, sound = true }
+  
+  if not (HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.leash and HardcoreHUDDB.warnings.leash.enabled) then
+    if H.leashWarn then H.leashWarn:Hide() end
+    return
+  end
+
+  -- Check if target exists and is hostile
+  if not UnitExists("target") or not UnitCanAttack("player", "target") then
+    if H.leashWarn then H.leashWarn:Hide() end
+    return
+  end
+
+  -- Only show during combat
+  if not InCombatLockdown() then
+    if H.leashWarn then H.leashWarn:Hide() end
+    return
+  end
+
+  -- Show leash tracking
+  if H.leashWarn then
+    H.leashWarn:Show()
+    
+    -- Get leash distance (default 50 yards)
+    local leashDist = HardcoreHUDDB.warnings.leash.distance or 50
+    
+    -- Calculate time in combat
+    local combatTime = math.max(0, (GetTime() - (H._combatStartTime or GetTime())))
+    
+    -- Update bar (simulate distance from combat start point)
+    if H.leashWarn.bar then
+      H.leashWarn.bar:SetMinMaxValues(0, leashDist)
+      
+      -- Distance increases over time (simulate movement speed)
+      local distance = math.min(leashDist, combatTime * 5)  -- 5 yards per second
+      H.leashWarn.bar:SetValue(distance)
+      
+      -- Color: green to yellow to red as distance increases
+      local ratio = distance / leashDist
+      local r, g, b
+      if ratio < 0.5 then
+        r, g, b = 0, 1, 0  -- Green: safe
+      elseif ratio < 0.8 then
+        r, g, b = 1, 1, 0  -- Yellow: caution
+      else
+        r, g, b = 1, 0, 0  -- Red: danger
+      end
+      H.leashWarn.bar:SetStatusBarColor(r, g, b)
+    end
+    
+    -- Update stats text: distance / max distance | combat time
+    if H.leashWarn.stats then
+      local distance = math.min(leashDist, combatTime * 5)
+      H.leashWarn.stats:SetText(string.format("%.1f / %d yd  |  %.1fs", distance, leashDist, combatTime))
+    end
+  end
+end
+
+-- Show Leash Display in test mode for positioning
+function H.ShowLeashTest()
+  if not H.leashWarn then return end
+  
+  -- Set test mode flag
+  H._leashTestMode = true
+  
+  H.leashWarn:Show()
+  if H.leashWarn.bar then
+    H.leashWarn.bar:SetValue(65)
+    H.leashWarn.bar:SetStatusBarColor(1, 0.5, 0, 1)
+  end
+  if H.leashWarn.stats then
+    H.leashWarn.stats:SetText("20m / 31m | 8s")
+  end
+  
+  -- Hide after 10 seconds
+  if H._leashTestTimer then
+    H._leashTestTimer:Cancel()
+  end
+  H._leashTestTimer = C_Timer.NewTimer(10, function()
+    H._leashTestMode = false
+    if H.leashWarn and not HardcoreHUDDB.warnings.leash.locked then
+      H.leashWarn:Hide()
+    end
+    H._leashTestTimer = nil
+  end)
+end
+
+-- Hide Leash Display test mode
+function H.HideLeashTest()
+  if not H.leashWarn then return end
+  
+  -- Cancel timer if active
+  if H._leashTestTimer then
+    H._leashTestTimer:Cancel()
+    H._leashTestTimer = nil
+  end
+  
+  H._leashTestMode = false
+  H.leashWarn:Hide()
+end
+
+-- Show Range Display in test mode for positioning
+function H.ShowRangeDisplayTest()
+  if not H.rangeDisplay then return end
+  H.rangeDisplay:Show()
+  if H.rangeDisplay.text then
+    H.rangeDisplay.text:SetText("25.0 yd")
+    H.rangeDisplay.text:SetTextColor(1, 0.8, 0)  -- Orange
+  end
+end
+
+-- Hide Range Display test mode
+function H.HideRangeDisplayTest()
+  if not H.rangeDisplay then return end
+  if not H._debugRangeDisplay then
+    H.rangeDisplay:Hide()
+  end
+end
+
+-- Range Display updater (simple distance display to target)
+function H.CheckRangeDisplay()
+  if not H.rangeDisplay then
+    return
+  end
+  
+  -- ALWAYS enable range display by default (override old saved vars)
+  HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
+  HardcoreHUDDB.warnings.rangeDisplay = HardcoreHUDDB.warnings.rangeDisplay or { enabled = true }
+  HardcoreHUDDB.warnings.rangeDisplay.enabled = true  -- Force enabled
+  
+  -- Debug mode: show real distance
+  if H._debugRangeDisplay then
+    H.rangeDisplay:Show()
+    if not UnitExists("target") then
+      if H.rangeDisplay.text then
+        H.rangeDisplay.text:SetText("No Target")
+      end
+      return
+    end
+    
+    local distance = H.GetDistanceToTarget()
+    if not distance then
+      if H.rangeDisplay.text then
+        H.rangeDisplay.text:SetText("Range: N/A")
+      end
+      return
+    end
+    
+    if H.rangeDisplay.text then
+      H.rangeDisplay.text:SetText(string.format("%.1f yd", distance))
+      -- Color coding: <20y green, 20-30y orange, 30+y red
+      if distance < 20 then
+        H.rangeDisplay.text:SetTextColor(0.2, 1, 0.2)  -- Green
+      elseif distance <= 30 then
+        H.rangeDisplay.text:SetTextColor(1, 0.8, 0)    -- Orange
+      else
+        H.rangeDisplay.text:SetTextColor(1, 0.2, 0.2)  -- Red
+      end
+    end
+    return
+  end
+  
+  -- Normal mode: only show when enabled
+  if not UnitExists("target") then
+    H.rangeDisplay:Hide()
+    return
+  end
+  
+  local distance = H.GetDistanceToTarget()
+  if not distance then
+    H.rangeDisplay:Hide()
+    return
+  end
+  
+  -- Show range
+  H.rangeDisplay:Show()
+  if H.rangeDisplay.text then
+    H.rangeDisplay.text:SetText(string.format("%.1f yd", distance))
+    -- Color coding per requirements: <20y green, 20-30y orange, 30+y red
+    if distance < 20 then
+      H.rangeDisplay.text:SetTextColor(0.2, 1, 0.2)  -- Green: under 20yd
+    elseif distance <= 30 then
+      H.rangeDisplay.text:SetTextColor(1, 0.8, 0)    -- Orange: 20-30yd
+    else
+      H.rangeDisplay.text:SetTextColor(1, 0.2, 0.2)  -- Red: over 30yd
+    end
+  end
+end
+
+-- Get distance to target using LibRangeCheck-3.0
+function H.GetDistanceToTarget()
+  if not rc or not UnitExists("target") then return nil end
+  
+  local minRange, maxRange = rc:GetRange("target")
+  
+  if not minRange then return nil end
+  
+  -- Return the minimum range (actual distance)
+  return minRange
+end
+
+-- Leash distance periodic updater
+if not H._leashUpdateFrame then
+  local lf = CreateFrame("Frame")
+  H._leashUpdateFrame = lf
+  local acc = 0
+  lf:SetScript("OnUpdate", function(_, dt)
+    acc = acc + dt
+    if acc >= 0.25 then  -- Check 4 times per second
+      acc = 0
+      H.CheckLeashDistance()
+      H.CheckRangeDisplay()
+      H.CheckDangerousDebuffs()
+    end
+  end)
+end
+
+-- GTFO System (Get The F* Out - AoE/Danger warnings)
+function H.InitGTFO()
+  if H._gtfoInit then return end
+  H._gtfoInit = true
+  
+  HardcoreHUDDB.gtfo = HardcoreHUDDB.gtfo or {
+    enabled = true,
+    highDamage = true,
+    lowDamage = true,
+    fallAlert = true,
+    volume = 1.0,
+    lastAlert = 0
+  }
+  
+  -- Dangerous debuff types that indicate AoE/Environment damage
+  H._dangerousDebuffs = {
+    -- Fire/Burn effects
+    ["Burning"] = "high",
+    ["Immolate"] = "high",
+    ["Rend"] = "high",
+    ["Incinerate"] = "high",
+    
+    -- Poison effects
+    ["Poison"] = "medium",
+    ["Deadly Poison"] = "high",
+    ["Crippling Poison"] = "medium",
+    ["Wound Poison"] = "medium",
+    
+    -- Curse effects
+    ["Curse of Weakness"] = "low",
+    ["Curse of Elements"] = "low",
+    ["Curse of Recklessness"] = "high",
+    
+    -- Disease effects
+    ["Plague"] = "medium",
+    ["Black Plague"] = "high",
+    ["Cripple"] = "medium",
+    
+    -- Other dangerous effects
+    ["Corruption"] = "medium",
+    ["Fear"] = "high",
+    ["Frost Armor"] = "low",
+    ["Slow"] = "low",
+    ["Bleed"] = "medium",
+  }
+  
+  -- Track last alert time to prevent spam
+  H._lastGTFOAlert = 0
+end
+
+function H.CheckDangerousDebuffs()
+  if not (HardcoreHUDDB.gtfo and HardcoreHUDDB.gtfo.enabled) then return end
+  
+  -- Ensure initialization (fallback in case InitGTFO hasn't been called yet)
+  if not H._lastGTFOAlert then H._lastGTFOAlert = 0 end
+  if not H._dangerousDebuffs then H.InitGTFO() end
+  
+  local now = GetTime()
+  if now - H._lastGTFOAlert < 0.5 then return end  -- Limit alerts to max 2/sec
+  
+  -- Check player debuffs
+  local i = 1
+  while true do
+    local name, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, nameplateShowPersonal, spellId = UnitDebuff("player", i)
+    if not name then break end
+    
+    local alertType = H._dangerousDebuffs[name]
+    
+    if alertType then
+      -- Check if we should alert based on type
+      local shouldAlert = false
+      
+      if alertType == "high" and HardcoreHUDDB.gtfo.highDamage then
+        shouldAlert = true
+      elseif (alertType == "medium" or alertType == "low") and HardcoreHUDDB.gtfo.lowDamage then
+        shouldAlert = true
+      end
+      
+      if shouldAlert then
+        H.TriggerGTFOAlert(name, alertType)
+        H._lastGTFOAlert = now
+        return
+      end
+    end
+    
+    i = i + 1
+  end
+  
+  -- Check for falling damage warning
+  if HardcoreHUDDB.gtfo.fallAlert then
+    local fallName, fallTime = GetMirrorTimerInfo(2)  -- MIRROR_TIMER_FALL (2): returns (name, currentTime, maxTime, ...)
+    if fallName and fallName ~= "" and fallTime and fallTime > 0 then
+      H.TriggerGTFOAlert("FALLING!", "fall")
+      H._lastGTFOAlert = now
+    end
+  end
+end
+
+function H.TriggerGTFOAlert(debuffName, alertType)
+  local volume = HardcoreHUDDB.gtfo.volume or 1.0
+  
+  -- Don't alert if volume is muted
+  if volume <= 0 then return end
+  
+  -- Play different sounds based on alert type
+  local soundFile
+  if alertType == "high" or alertType == "fall" then
+    -- High priority / Raid damage sound
+    soundFile = "Sound\\Interface\\RaidWarning.wav"
+  else
+    -- Low priority / Environment damage sound
+    soundFile = "Sound\\Interface\\Ignored_Alert.wav"
+  end
+  
+  if soundFile then
+    -- Note: WoW Classic PlaySoundFile doesn't support volume parameter
+    -- Volume can be adjusted via Master channel or game settings
+    PlaySoundFile(soundFile, "Master")
+  end
+  
+  -- Visual feedback
+  if H.gtfoFrame then
+    H.gtfoFrame:Show()
+    if H.gtfoFrame.text then
+      H.gtfoFrame.text:SetText("GET OUT: " .. debuffName)
+    end
+  end
+end
+
+function H.BuildGTFOFrame()
+  if H.gtfoFrame then return end
+  
+  local f = CreateFrame("Frame", nil, UIParent)
+  H.gtfoFrame = f
+  f:SetSize(280, 60)
+  f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  f:SetFrameStrata("FULLSCREEN_DIALOG")
+  f:Hide()
+  
+  -- Background (pulsing red warning)
+  local bg = f:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints(f)
+  bg:SetColorTexture(0.8, 0.1, 0.1, 0.7)
+  f.bg = bg
+  
+  -- Border
+  local border = f:CreateTexture(nil, "OVERLAY")
+  border:SetAllPoints(f)
+  border:SetTexture("Interface/Tooltips/UI-Tooltip-Border")
+  border:SetVertexColor(1, 0, 0, 1)
+  
+  -- Text
+  local text = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  text:SetPoint("CENTER", f, "CENTER", 0, 0)
+  text:SetText("GET OUT!")
+  text:SetTextColor(1, 1, 1, 1)
+  if STANDARD_TEXT_FONT then text:SetFont(STANDARD_TEXT_FONT, 28, "OUTLINE") end
+  text:SetShadowColor(0, 0, 0, 1)
+  text:SetShadowOffset(2, -2)
+  f.text = text
+  
+  -- Pulse animation
+  f._pulseAcc = 0
+  f:SetScript("OnUpdate", function(self, dt)
+    if not self:IsShown() then return end
+    self._pulseAcc = (self._pulseAcc or 0) + dt
+    local alpha = 0.5 + 0.3 * math.sin(self._pulseAcc * 6)
+    self.bg:SetAlpha(alpha)
+    
+    -- Auto-hide after 2 seconds
+    if self._pulseAcc > 2 then
+      self:Hide()
+      self._pulseAcc = 0
+    end
+  end)
+end
+
+function H.TestGTFOAlert(alertType)
+  if not H.gtfoFrame then H.BuildGTFOFrame() end
+  
+  if alertType == "high" then
+    H.TriggerGTFOAlert("TEST: HIGH DAMAGE", "high")
+  elseif alertType == "low" then
+    H.TriggerGTFOAlert("TEST: LOW DAMAGE", "low")
+  elseif alertType == "fall" then
+    H.TriggerGTFOAlert("TEST: FALLING", "fall")
+  end
 end

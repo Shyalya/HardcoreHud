@@ -15,8 +15,7 @@ function H.BuildOptions()
   if HardcoreHUDDB.warnings.multiAggro == nil then HardcoreHUDDB.warnings.multiAggro = true end
   f:SetSize(860, 520)
   f:SetPoint("CENTER")
-  f:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=6,right=6,top=6,bottom=6} })
-  f:SetBackdropColor(0,0,0,0.8)
+  H.SafeBackdrop(f, { bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=6,right=6,top=6,bottom=6} }, 0,0,0,0.8)
   f:Hide()
   f:EnableMouse(true)
   f:SetMovable(true)
@@ -48,6 +47,9 @@ function H.BuildOptions()
   local btnWarnings = makeTabButton("HardcoreHUDTabWarnings", "Warnings", 32)
   local btnRemind   = makeTabButton("HardcoreHUDTabReminders", "Reminders", 64)
   local btnAdvanced = makeTabButton("HardcoreHUDTabAdvanced", "Advanced", 96)
+  local btnUtilities = makeTabButton("HardcoreHUDTabUtilities", "Utilities", 128)
+  local btnTargetMarks = makeTabButton("HardcoreHUDTabTargetMarks", "Target Marks", 160)
+  local btnLeveling = makeTabButton("HardcoreHUDTabLeveling", "Leveling", 192)
 
   local function makePanel()
     local p = CreateFrame("Frame", nil, content)
@@ -56,10 +58,70 @@ function H.BuildOptions()
     return p
   end
 
+  -- Safe checkbutton factory: try to create with provided template, fallback to a simple styled CheckButton
+  local function SafeCheckButton(name, parent, template)
+    if not name or not parent then return CreateFrame("CheckButton", nil, parent) end
+    local ok, btn = pcall(CreateFrame, "CheckButton", name, parent, template)
+    if ok and btn then return btn end
+    local b = CreateFrame("CheckButton", name, parent)
+    b:SetSize(20,20)
+    if b.SetFrameStrata then b:SetFrameStrata("HIGH") end
+    -- Use Blizzard checkbox textures when available
+    if b.SetNormalTexture then b:SetNormalTexture("Interface/Buttons/UI-CheckBox-Up") end
+    if b.SetPushedTexture then b:SetPushedTexture("Interface/Buttons/UI-CheckBox-Down") end
+    if b.SetHighlightTexture then b:SetHighlightTexture("Interface/Buttons/UI-CheckBox-Highlight") end
+    if b.SetCheckedTexture then 
+      local tex = b:SetCheckedTexture("Interface/Buttons/UI-CheckBox-Check")
+      -- Ensure the checked texture is created and can be shown/hidden
+      if tex and tex.SetTexture then
+        tex:SetTexture("Interface/Buttons/UI-CheckBox-Check")
+      end
+    end
+    -- Override SetChecked to ensure texture visibility is updated
+    local originalSetChecked = b.SetChecked
+    b.SetChecked = function(self, checked)
+      if originalSetChecked then originalSetChecked(self, checked) end
+      local checkedTex = self:GetCheckedTexture()
+      if checkedTex then
+        if checked then
+          checkedTex:Show()
+        else
+          checkedTex:Hide()
+        end
+      end
+    end
+    -- Create a named FontString to mimic the usual template behavior
+    local txtName = name.."Text"
+    if not _G[txtName] then
+      -- Create a small invisible clickable label button to emulate template behavior
+      local lbl = CreateFrame("Button", txtName.."Click", b)
+      lbl:SetSize(220, 20)
+      lbl:SetPoint("LEFT", b, "RIGHT", 6, 0)
+      -- Ensure label sits above parent backdrop: use high strata and level
+      pcall(function()
+        if lbl.SetFrameStrata then lbl:SetFrameStrata("FULLSCREEN_DIALOG") end
+        local baseLevel = (b.GetFrameLevel and b.GetFrameLevel(b)) or 0
+        if lbl.SetFrameLevel then lbl:SetFrameLevel(baseLevel + 50) end
+      end)
+      lbl:EnableMouse(true)
+      -- Ensure keyboard input is not blocked by checkbox labels
+      if lbl.EnableKeyboard then lbl:EnableKeyboard(false) end
+      if lbl.SetPropagateKeyboardInput then lbl:SetPropagateKeyboardInput(true) end
+      local fs = lbl:CreateFontString(txtName, "ARTWORK", "GameFontNormal")
+      fs:SetPoint("LEFT", lbl, "LEFT", 0, 0)
+      fs:SetJustifyH("LEFT")
+      lbl:SetScript("OnClick", function() pcall(function() b:Click() end) end)
+    end
+    return b
+  end
+
   local panelLayout   = makePanel()
   local panelWarnings = makePanel()
   local panelRemind   = makePanel()
   local panelAdvanced = makePanel()
+  local panelUtilities = makePanel()
+  local panelTargetMarks = makePanel()
+  local panelLeveling = makePanel()
 
   -- Advanced panel: create two column containers to avoid overflow
   local advLeft = CreateFrame("Frame", nil, panelAdvanced)
@@ -72,14 +134,22 @@ function H.BuildOptions()
   advRight:SetPoint("BOTTOMRIGHT", panelAdvanced, "BOTTOMRIGHT", 0, 0)
 
   local function showPanel(p)
-    panelLayout:Hide(); panelWarnings:Hide(); panelRemind:Hide(); panelAdvanced:Hide()
+    panelLayout:Hide(); panelWarnings:Hide(); panelRemind:Hide(); panelAdvanced:Hide(); panelUtilities:Hide(); panelTargetMarks:Hide(); panelLeveling:Hide()
     p:Show()
   end
   btnLayout:SetScript("OnClick", function() showPanel(panelLayout) end)
   btnWarnings:SetScript("OnClick", function() showPanel(panelWarnings) end)
   btnRemind:SetScript("OnClick", function() showPanel(panelRemind) end)
   btnAdvanced:SetScript("OnClick", function() showPanel(panelAdvanced) end)
+  btnUtilities:SetScript("OnClick", function() showPanel(panelUtilities) end)
+  btnTargetMarks:SetScript("OnClick", function() showPanel(panelTargetMarks) end)
+  btnLeveling:SetScript("OnClick", function() showPanel(panelLeveling) end)
   showPanel(panelLayout)
+  
+  -- Hide range display test when options frame closes
+  f:SetScript("OnHide", function()
+    if H.HideRangeDisplayTest then H.HideRangeDisplayTest() end
+  end)
 
   -- Thickness slider (left column)
   -- Layout panel controls
@@ -130,8 +200,8 @@ function H.BuildOptions()
 
   -- Vertical separation slider will be added after Multi-Aggro slider is defined
 
-  -- Warnings panel controls
-  local warnEnable = CreateFrame("CheckButton", "HardcoreHUDWarnEnable", panelWarnings, "OptionsCheckButtonTemplate")
+  -- Warnings panel controls - LEFT COLUMN (Checkboxes)
+  local warnEnable = SafeCheckButton("HardcoreHUDWarnEnable", panelWarnings, "OptionsCheckButtonTemplate")
   warnEnable:ClearAllPoints()
   warnEnable:SetPoint("TOPLEFT", panelWarnings, "TOPLEFT", 0, -8)
   HardcoreHUDDB.warnings.enabled = (HardcoreHUDDB.warnings.enabled ~= false)
@@ -150,33 +220,71 @@ function H.BuildOptions()
       if H.EvaluateMultiAggro then H.EvaluateMultiAggro() end
     end
   end)
-  local crit = CreateFrame("CheckButton", "HardcoreHUDCritWarn", panelWarnings, "OptionsCheckButtonTemplate")
+  
+  local crit = SafeCheckButton("HardcoreHUDCritWarn", panelWarnings, "OptionsCheckButtonTemplate")
   crit:ClearAllPoints()
-  crit:SetPoint("TOPLEFT", warnEnable, "BOTTOMLEFT", 0, -18)
+  crit:SetPoint("TOPLEFT", warnEnable, "BOTTOMLEFT", 0, -8)
   crit:SetChecked(HardcoreHUDDB.warnings.criticalHP)
   if _G[crit:GetName().."Text"] then _G[crit:GetName().."Text"]:SetText("Critical HP Warning") end
   crit:SetScript("OnClick", function(self) HardcoreHUDDB.warnings.criticalHP = self:GetChecked() end)
 
-  -- Red pulsing screen overlay toggle for critical HP
   if HardcoreHUDDB.warnings.criticalOverlayEnabled == nil then HardcoreHUDDB.warnings.criticalOverlayEnabled = true end
-  local critOverlay = CreateFrame("CheckButton", "HardcoreHUDCritOverlay", panelWarnings, "OptionsCheckButtonTemplate")
+  local critOverlay = SafeCheckButton("HardcoreHUDCritOverlay", panelWarnings, "OptionsCheckButtonTemplate")
   critOverlay:ClearAllPoints()
-  critOverlay:SetPoint("TOPLEFT", crit, "BOTTOMLEFT", 0, -18)
+  critOverlay:SetPoint("TOPLEFT", crit, "BOTTOMLEFT", 0, -8)
   critOverlay:SetChecked(HardcoreHUDDB.warnings.criticalOverlayEnabled ~= false)
   if _G[critOverlay:GetName().."Text"] then _G[critOverlay:GetName().."Text"]:SetText("Critical HP Red Pulse") end
   critOverlay:SetScript("OnClick", function(self)
     HardcoreHUDDB.warnings.criticalOverlayEnabled = self:GetChecked()
-    print("HardcoreHUD: Critical red pulse "..(HardcoreHUDDB.warnings.criticalOverlayEnabled and "ON" or "OFF"))
     if H.UpdateCriticalOverlay then H.UpdateCriticalOverlay() end
   end)
 
+  local skull = SafeCheckButton("HardcoreHUDSkullWarn", panelWarnings, "OptionsCheckButtonTemplate")
+  skull:ClearAllPoints()
+  skull:SetPoint("TOPLEFT", critOverlay, "BOTTOMLEFT", 0, -8)
+  skull:SetChecked(HardcoreHUDDB.warnings.levelElite)
+  if _G[skull:GetName().."Text"] then _G[skull:GetName().."Text"]:SetText("Elite/+2 Level Skull") end
+  skull:SetScript("OnClick", function(self) HardcoreHUDDB.warnings.levelElite = self:GetChecked(); H.CheckSkull() end)
+
+  local perf = SafeCheckButton("HardcoreHUDPerfWarn", panelWarnings, "OptionsCheckButtonTemplate")
+  perf:ClearAllPoints()
+  perf:SetPoint("TOPLEFT", skull, "BOTTOMLEFT", 0, -8)
+  HardcoreHUDDB.warnings.latency = (HardcoreHUDDB.warnings.latency ~= false)
+  perf:SetChecked(HardcoreHUDDB.warnings.latency)
+  if _G[perf:GetName().."Text"] then _G[perf:GetName().."Text"]:SetText("Latency/FPS Warning") end
+  perf:SetScript("OnClick", function(self)
+    HardcoreHUDDB.warnings.latency = self:GetChecked()
+    if not HardcoreHUDDB.warnings.latency and H.perfWarn then H.perfWarn:Hide() end
+  end)
+
+  HardcoreHUDDB.warnings.leash = HardcoreHUDDB.warnings.leash or { enabled = true, distance = 50, sound = true }
+  local leashEnable = SafeCheckButton("HardcoreHUDLeashEnable", panelWarnings, "OptionsCheckButtonTemplate")
+  leashEnable:ClearAllPoints()
+  leashEnable:SetPoint("TOPLEFT", perf, "BOTTOMLEFT", 0, -8)
+  leashEnable:SetChecked(HardcoreHUDDB.warnings.leash.enabled ~= false)
+  if _G[leashEnable:GetName().."Text"] then _G[leashEnable:GetName().."Text"]:SetText("Leash Warning") end
+  leashEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.warnings.leash.enabled = self:GetChecked()
+    if not HardcoreHUDDB.warnings.leash.enabled and H.leashWarn then H.leashWarn:Hide() end
+  end)
+
+  local rangeEnable = SafeCheckButton("HardcoreHUDRangeEnable", panelWarnings, "OptionsCheckButtonTemplate")
+  rangeEnable:ClearAllPoints()
+  rangeEnable:SetPoint("TOPLEFT", leashEnable, "BOTTOMLEFT", 0, -8)
+  rangeEnable:SetChecked(HardcoreHUDDB.warnings.rangeDisplay.enabled ~= false)
+  if _G[rangeEnable:GetName().."Text"] then _G[rangeEnable:GetName().."Text"]:SetText("Range Display") end
+  rangeEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.warnings.rangeDisplay.enabled = self:GetChecked()
+    if not HardcoreHUDDB.warnings.rangeDisplay.enabled and H.rangeDisplay then H.rangeDisplay:Hide() end
+  end)
+
+  -- RIGHT COLUMN (Sliders & GTFO) - starts at top right
   -- Critical HP threshold slider
   HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
   if HardcoreHUDDB.warnings.criticalThreshold == nil then HardcoreHUDDB.warnings.criticalThreshold = 0.20 end
   local critThresh = CreateFrame("Slider", "HardcoreHUDCritThreshold", panelWarnings, "OptionsSliderTemplate")
   critThresh:ClearAllPoints()
-  -- Place Critical HP Threshold below critical red pulse toggle
-  critThresh:SetPoint("TOPLEFT", critOverlay, "BOTTOMLEFT", 0, -18)
+  critThresh:SetPoint("TOPLEFT", panelWarnings, "TOPLEFT", 200, -8)
   critThresh:SetMinMaxValues(0.15, 0.50)
   critThresh:SetValueStep(0.01)
   if critThresh.SetObeyStepOnDrag then critThresh:SetObeyStepOnDrag(true) end
@@ -186,32 +294,109 @@ function H.BuildOptions()
   critThresh:SetScript("OnValueChanged", function(self,val)
     val = tonumber(string.format("%.2f", val))
     HardcoreHUDDB.warnings.criticalThreshold = val
-    print("HardcoreHUD: Critical HP threshold = "..math.floor(val*100+0.5).."%")
     if H.UpdateHealth then H.UpdateHealth() end
   end)
 
-  local skull = CreateFrame("CheckButton", "HardcoreHUDSkullWarn", panelWarnings, "OptionsCheckButtonTemplate")
-  skull:ClearAllPoints()
-  -- Anchor skull below Critical Threshold to avoid overlap
-  skull:SetPoint("TOPLEFT", critThresh, "BOTTOMLEFT", 0, -18)
-  skull:SetChecked(HardcoreHUDDB.warnings.levelElite)
-  if _G[skull:GetName().."Text"] then _G[skull:GetName().."Text"]:SetText("Elite/+2 Level Skull") end
-  skull:SetScript("OnClick", function(self) HardcoreHUDDB.warnings.levelElite = self:GetChecked(); H.CheckSkull() end)
-
-  -- Latency/FPS warning toggle (performance)
-  local perf = CreateFrame("CheckButton", "HardcoreHUDPerfWarn", panelWarnings, "OptionsCheckButtonTemplate")
-  perf:ClearAllPoints()
-  perf:SetPoint("TOPLEFT", skull, "BOTTOMLEFT", 0, -18)
-  HardcoreHUDDB.warnings.latency = (HardcoreHUDDB.warnings.latency ~= false)
-  perf:SetChecked(HardcoreHUDDB.warnings.latency)
-  if _G[perf:GetName().."Text"] then _G[perf:GetName().."Text"]:SetText("Latency/FPS Warning") end
-  perf:SetScript("OnClick", function(self)
-    HardcoreHUDDB.warnings.latency = self:GetChecked()
-    if not HardcoreHUDDB.warnings.latency and H.perfWarn then H.perfWarn:Hide() end
-    print("HardcoreHUD: perf warning "..(HardcoreHUDDB.warnings.latency and "ON" or "OFF"))
+  -- Leash distance slider
+  local leashDist = CreateFrame("Slider", "HardcoreHUDLeashDistance", panelWarnings, "OptionsSliderTemplate")
+  leashDist:ClearAllPoints()
+  leashDist:SetPoint("TOPLEFT", critThresh, "BOTTOMLEFT", 0, -20)
+  leashDist:SetMinMaxValues(30, 60)
+  leashDist:SetValueStep(1)
+  leashDist:SetValue(HardcoreHUDDB.warnings.leash.distance or 50)
+  if _G[leashDist:GetName().."Low"] then _G[leashDist:GetName().."Low"]:SetText("30y") end
+  if _G[leashDist:GetName().."High"] then _G[leashDist:GetName().."High"]:SetText("60y") end
+  if _G[leashDist:GetName().."Text"] then _G[leashDist:GetName().."Text"]:SetText("Leash Distance") end
+  leashDist:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.warnings.leash.distance = val
   end)
 
+  -- GTFO System - label and controls
+  local gtfoLabel = panelWarnings:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  gtfoLabel:SetPoint("TOPLEFT", leashDist, "BOTTOMLEFT", 0, -20)
+  gtfoLabel:SetText("GTFO - Danger Alerts")
+  gtfoLabel:SetDrawLayer("OVERLAY")
+
+  HardcoreHUDDB.gtfo = HardcoreHUDDB.gtfo or { enabled = true, highDamage = true, lowDamage = true, fallAlert = true, volume = 1.0 }
   
+  local gtfoEnable = SafeCheckButton("HardcoreHUDGTFOEnable", panelWarnings, "OptionsCheckButtonTemplate")
+  gtfoEnable:ClearAllPoints()
+  gtfoEnable:SetPoint("TOPLEFT", gtfoLabel, "BOTTOMLEFT", 0, -8)
+  gtfoEnable:SetChecked(HardcoreHUDDB.gtfo.enabled ~= false)
+  if _G[gtfoEnable:GetName().."Text"] then _G[gtfoEnable:GetName().."Text"]:SetText("Enable GTFO") end
+  gtfoEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.gtfo.enabled = self:GetChecked()
+    if not H._gtfoInit then H.InitGTFO() end
+  end)
+
+  local gtfoHigh = SafeCheckButton("HardcoreHUDGTFOHigh", panelWarnings, "OptionsCheckButtonTemplate")
+  gtfoHigh:ClearAllPoints()
+  gtfoHigh:SetPoint("TOPLEFT", gtfoEnable, "BOTTOMLEFT", 0, -8)
+  gtfoHigh:SetChecked(HardcoreHUDDB.gtfo.highDamage ~= false)
+  if _G[gtfoHigh:GetName().."Text"] then _G[gtfoHigh:GetName().."Text"]:SetText("High Damage Alerts") end
+  gtfoHigh:SetScript("OnClick", function(self)
+    HardcoreHUDDB.gtfo.highDamage = self:GetChecked()
+  end)
+
+  local gtfoLow = SafeCheckButton("HardcoreHUDGTFOLow", panelWarnings, "OptionsCheckButtonTemplate")
+  gtfoLow:ClearAllPoints()
+  gtfoLow:SetPoint("TOPLEFT", gtfoHigh, "BOTTOMLEFT", 0, -8)
+  gtfoLow:SetChecked(HardcoreHUDDB.gtfo.lowDamage ~= false)
+  if _G[gtfoLow:GetName().."Text"] then _G[gtfoLow:GetName().."Text"]:SetText("Low Damage Alerts") end
+  gtfoLow:SetScript("OnClick", function(self)
+    HardcoreHUDDB.gtfo.lowDamage = self:GetChecked()
+  end)
+
+  local gtfoFall = SafeCheckButton("HardcoreHUDGTFOFall", panelWarnings, "OptionsCheckButtonTemplate")
+  gtfoFall:ClearAllPoints()
+  gtfoFall:SetPoint("TOPLEFT", gtfoLow, "BOTTOMLEFT", 0, -8)
+  gtfoFall:SetChecked(HardcoreHUDDB.gtfo.fallAlert ~= false)
+  if _G[gtfoFall:GetName().."Text"] then _G[gtfoFall:GetName().."Text"]:SetText("Fall Alerts") end
+  gtfoFall:SetScript("OnClick", function(self)
+    HardcoreHUDDB.gtfo.fallAlert = self:GetChecked()
+  end)
+
+  -- GTFO Volume slider
+  local gtfoVol = CreateFrame("Slider", "HardcoreHUDGTFOVolume", panelWarnings, "OptionsSliderTemplate")
+  gtfoVol:ClearAllPoints()
+  gtfoVol:SetPoint("TOPLEFT", gtfoFall, "BOTTOMLEFT", 0, -18)
+  gtfoVol:SetMinMaxValues(0, 1)
+  gtfoVol:SetValueStep(0.1)
+  gtfoVol:SetValue(HardcoreHUDDB.gtfo.volume or 1.0)
+  if _G[gtfoVol:GetName().."Low"] then _G[gtfoVol:GetName().."Low"]:SetText("0%") end
+  if _G[gtfoVol:GetName().."High"] then _G[gtfoVol:GetName().."High"]:SetText("100%") end
+  if _G[gtfoVol:GetName().."Text"] then _G[gtfoVol:GetName().."Text"]:SetText("GTFO Volume") end
+  gtfoVol:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.gtfo.volume = val
+  end)
+
+  -- Test buttons
+  local testHighBtn = CreateFrame("Button", nil, panelWarnings, "UIPanelButtonTemplate")
+  testHighBtn:SetSize(80, 22)
+  testHighBtn:SetPoint("TOPLEFT", gtfoVol, "BOTTOMLEFT", 0, -18)
+  testHighBtn:SetText("Test High")
+  testHighBtn:SetScript("OnClick", function()
+    if not H.gtfoFrame then H.BuildGTFOFrame() end
+    H.TestGTFOAlert("high")
+  end)
+
+  local testLowBtn = CreateFrame("Button", nil, panelWarnings, "UIPanelButtonTemplate")
+  testLowBtn:SetSize(80, 22)
+  testLowBtn:SetPoint("LEFT", testHighBtn, "RIGHT", 8, 0)
+  testLowBtn:SetText("Test Low")
+  testLowBtn:SetScript("OnClick", function()
+    if not H.gtfoFrame then H.BuildGTFOFrame() end
+    H.TestGTFOAlert("low")
+  end)
+
+  local testFallBtn = CreateFrame("Button", nil, panelWarnings, "UIPanelButtonTemplate")
+  testFallBtn:SetSize(80, 22)
+  testFallBtn:SetPoint("LEFT", testLowBtn, "RIGHT", 8, 0)
+  testFallBtn:SetText("Test Fall")
+  testFallBtn:SetScript("OnClick", function()
+    if not H.gtfoFrame then H.BuildGTFOFrame() end
+    H.TestGTFOAlert("fall")
+  end)
 
   -- (Rounded and texture options removed)
 
@@ -248,14 +433,12 @@ function H.BuildOptions()
     print("HardcoreHUD: Multi-aggro threshold = "..HardcoreHUDDB.warnings.multiAggroThreshold)
   end)
 
-  -- (moved Five-second rule opacity slider below TTD sliders to avoid nil anchor)
-
-  local lock = CreateFrame("CheckButton", "HardcoreHUDLock", panelWarnings, "InterfaceOptionsCheckButtonTemplate")
+  -- Lock HUD Checkbox (layout section - moved to right column)
+  local lock = SafeCheckButton("HardcoreHUDLock", panelLayout, "InterfaceOptionsCheckButtonTemplate")
   lock:ClearAllPoints()
-  -- Return Lock HUD to middle column under performance toggle
-  lock:SetPoint("TOPLEFT", perf, "BOTTOMLEFT", 0, -18)
+  lock:SetPoint("TOPLEFT", panelLayout, "TOPLEFT", 280, -20)
   lock:SetSize(24,24)
-  lock:SetChecked(true)
+  lock:SetChecked(HardcoreHUDDB.lock ~= false)
   H.lockCheckbox = lock
   local function forceCheckVisual()
     if not H.lockCheckbox then return end
@@ -294,6 +477,77 @@ function H.BuildOptions()
         if H.bars.targetPow then H.bars.targetPow:RegisterForDrag("LeftButton") end
       end
       print("HardcoreHUD: HUD unlocked, drag to move")
+    end
+  end)
+
+  -- Lock Range Display checkbox (under Lock HUD)
+  -- Ensure rangeDisplay table exists before creating checkbox
+  HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
+  HardcoreHUDDB.warnings.rangeDisplay = HardcoreHUDDB.warnings.rangeDisplay or { enabled = true, locked = false }
+  
+  local rangeLock = SafeCheckButton("HardcoreHUDRangeLock", panelLayout, "InterfaceOptionsCheckButtonTemplate")
+  rangeLock:ClearAllPoints()
+  rangeLock:SetPoint("TOPLEFT", lock, "BOTTOMLEFT", 0, -8)
+  rangeLock:SetSize(24,24)
+  rangeLock:SetChecked(HardcoreHUDDB.warnings.rangeDisplay.locked == true)
+  if _G[rangeLock:GetName().."Text"] then _G[rangeLock:GetName().."Text"]:SetText("Lock Range Display") end
+  rangeLock:SetScript("OnClick", function(self)
+    HardcoreHUDDB.warnings.rangeDisplay.locked = self:GetChecked()
+    if HardcoreHUDDB.warnings.rangeDisplay.locked then
+      -- Locked: hide test display
+      if H.HideRangeDisplayTest then H.HideRangeDisplayTest() end
+      print("HardcoreHUD: Range Display locked")
+    else
+      -- Unlocked: show test display for positioning
+      if H.ShowRangeDisplayTest then H.ShowRangeDisplayTest() end
+      print("HardcoreHUD: Range Display unlocked - drag to move")
+    end
+  end)
+
+  -- Lock Target Marks checkbox
+  local tmLock = SafeCheckButton("HardcoreHUDTargetMarksLock", panelLayout, "InterfaceOptionsCheckButtonTemplate")
+  tmLock:ClearAllPoints()
+  tmLock:SetPoint("TOPLEFT", rangeLock, "BOTTOMLEFT", 0, -8)
+  tmLock:SetSize(24,24)
+  tmLock:SetChecked(HardcoreHUDDB.targetMarks.locked == true)
+  if _G[tmLock:GetName().."Text"] then _G[tmLock:GetName().."Text"]:SetText("Lock Target Markers") end
+  tmLock:SetScript("OnClick", function(self)
+    HardcoreHUDDB.targetMarks.locked = self:GetChecked()
+    print("HardcoreHUD: Target mark bar "..(self:GetChecked() and "LOCKED" or "UNLOCKED"))
+  end)
+
+  -- Lock Leveling Tracker checkbox
+  local lvLock = SafeCheckButton("HardcoreHUDLevelingLock", panelLayout, "InterfaceOptionsCheckButtonTemplate")
+  lvLock:ClearAllPoints()
+  lvLock:SetPoint("TOPLEFT", tmLock, "BOTTOMLEFT", 0, -8)
+  lvLock:SetSize(24,24)
+  lvLock:SetChecked(HardcoreHUDDB.leveling.locked == true)
+  if _G[lvLock:GetName().."Text"] then _G[lvLock:GetName().."Text"]:SetText("Lock Leveling Tracker") end
+  lvLock:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.locked = self:GetChecked()
+    print("HardcoreHUD: Leveling tracker "..(self:GetChecked() and "LOCKED" or "UNLOCKED"))
+  end)
+  
+  -- Lock Leash Display checkbox
+  HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
+  HardcoreHUDDB.warnings.leash = HardcoreHUDDB.warnings.leash or { enabled = true, locked = false }
+  
+  local leashLock = SafeCheckButton("HardcoreHUDLeashLock", panelLayout, "InterfaceOptionsCheckButtonTemplate")
+  leashLock:ClearAllPoints()
+  leashLock:SetPoint("TOPLEFT", lvLock, "BOTTOMLEFT", 0, -8)
+  leashLock:SetSize(24,24)
+  leashLock:SetChecked(HardcoreHUDDB.warnings.leash.locked == true)
+  if _G[leashLock:GetName().."Text"] then _G[leashLock:GetName().."Text"]:SetText("Lock Leash Display") end
+  leashLock:SetScript("OnClick", function(self)
+    HardcoreHUDDB.warnings.leash.locked = self:GetChecked()
+    if HardcoreHUDDB.warnings.leash.locked then
+      -- Locked: hide test display
+      if H.HideLeashTest then H.HideLeashTest() end
+      print("HardcoreHUD: Leash Display locked")
+    else
+      -- Unlocked: show test display for positioning
+      if H.ShowLeashTest then H.ShowLeashTest() end
+      print("HardcoreHUD: Leash Display unlocked - drag to move")
     end
   end)
 
@@ -409,7 +663,7 @@ end
   -- Removed Test TTD Bar button; TTD is always enabled and visible in combat
 
   -- Buff/Consumable reminder toggle
-  local remind = CreateFrame("CheckButton", "HardcoreHUDBuffRemind", panelRemind, "OptionsCheckButtonTemplate")
+  local remind = SafeCheckButton("HardcoreHUDBuffRemind", panelRemind, "OptionsCheckButtonTemplate")
   remind:ClearAllPoints()
   -- Anchor within Reminders panel under tests label to avoid cross-panel dependency
   remind:SetPoint("TOPLEFT", testMulti, "BOTTOMLEFT", 0, -18)
@@ -435,7 +689,7 @@ end
   remCatLabel:SetDrawLayer("OVERLAY")
 
   -- Only keep Core Buffs toggle; Food/Flask removed per request
-  local rCore = CreateFrame("CheckButton", "HardcoreHUDRemindCore", panelRemind, "OptionsCheckButtonTemplate")
+  local rCore = SafeCheckButton("HardcoreHUDRemindCore", panelRemind, "OptionsCheckButtonTemplate")
   rCore:SetPoint("TOPLEFT", remCatLabel, "BOTTOMLEFT", 0, -8)
   rCore:SetChecked(HardcoreHUDDB.reminders.categories.survival)
   if _G[rCore:GetName().."Text"] then _G[rCore:GetName().."Text"]:SetText("Core Buffs: Fortitude/Mark/Kings") end
@@ -446,10 +700,66 @@ end
     if H.UpdateReminders then H.UpdateReminders() end
   end)
 
+  -- Thanks for Buff System
+  HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or { enabled = true, onlyOutsideGroup = true, message = "Thanks for the buff!" }
+  
+  local tbTitle = panelRemind:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  tbTitle:SetPoint("TOPLEFT", rCore, "BOTTOMLEFT", 0, -20)
+  tbTitle:SetText("Thanks for Buff")
+  tbTitle:SetDrawLayer("OVERLAY")
+
+  local tbEnable = SafeCheckButton("HardcoreHUDThanksBuff", panelRemind, "OptionsCheckButtonTemplate")
+  tbEnable:SetPoint("TOPLEFT", tbTitle, "BOTTOMLEFT", 0, -8)
+  tbEnable:SetChecked(HardcoreHUDDB.thanksBuff.enabled ~= false)
+  if _G[tbEnable:GetName().."Text"] then _G[tbEnable:GetName().."Text"]:SetText("Auto-thank buff givers") end
+  tbEnable:SetFrameStrata("FULLSCREEN_DIALOG")
+  tbEnable:SetFrameLevel(panelRemind:GetFrameLevel()+1)
+  tbEnable:SetScript("OnClick", function(self)
+    HardcoreHUDDB.thanksBuff.enabled = self:GetChecked()
+    if not H._thanksBuff then H.InitThanksBuff() end
+    print("HardcoreHUD: Thanks for Buff "..(self:GetChecked() and "ON" or "OFF"))
+  end)
+
+  local tbGroupOnly = SafeCheckButton("HardcoreHUDThanksBuffGroup", panelRemind, "OptionsCheckButtonTemplate")
+  tbGroupOnly:SetPoint("TOPLEFT", tbEnable, "BOTTOMLEFT", 0, -8)
+  tbGroupOnly:SetChecked(HardcoreHUDDB.thanksBuff.onlyOutsideGroup ~= false)
+  if _G[tbGroupOnly:GetName().."Text"] then _G[tbGroupOnly:GetName().."Text"]:SetText("Only thank outside group") end
+  tbGroupOnly:SetFrameStrata("FULLSCREEN_DIALOG")
+  tbGroupOnly:SetFrameLevel(panelRemind:GetFrameLevel()+1)
+  tbGroupOnly:SetScript("OnClick", function(self)
+    HardcoreHUDDB.thanksBuff.onlyOutsideGroup = self:GetChecked()
+    print("HardcoreHUD: Only outside group "..(self:GetChecked() and "ON" or "OFF"))
+  end)
+
+  local tbMsg = CreateFrame("EditBox", "HardcoreHUDThankBuffMsg", panelRemind)
+  if tbMsg then
+    tbMsg:SetSize(200, 20)
+    tbMsg:SetPoint("TOPLEFT", tbGroupOnly, "BOTTOMLEFT", 0, -12)
+    pcall(function() tbMsg:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=8, insets={left=2,right=2,top=2,bottom=2} }) end)
+    pcall(function() tbMsg:SetBackdropColor(0, 0, 0, 0.8) end)
+    pcall(function() tbMsg:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.5) end)
+    pcall(function() tbMsg:SetFont("Fonts/FRIZQT__.TTF", 11) end)
+    tbMsg:SetText(HardcoreHUDDB.thanksBuff.message or "Thanks for the buff!")
+    tbMsg:SetScript("OnEnterPressed", function(self)
+      HardcoreHUDDB.thanksBuff.message = self:GetText()
+      print("HardcoreHUD: Thanks message set to: " .. self:GetText())
+      self:ClearFocus()
+    end)
+    tbMsg:SetScript("OnEscapePressed", function(self)
+      self:SetText(HardcoreHUDDB.thanksBuff.message or "Thanks for the buff!")
+      self:ClearFocus()
+    end)
+  end
+
+  local tbMsgLabel = panelRemind:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  tbMsgLabel:SetPoint("BOTTOMLEFT", tbMsg, "TOPLEFT", 0, 4)
+  tbMsgLabel:SetText("Thank message:")
+  tbMsgLabel:SetDrawLayer("OVERLAY")
+
   -- Emergency CDs pulse toggle
   HardcoreHUDDB.emergency = HardcoreHUDDB.emergency or { enabled = true, hpThreshold = 0.50 }
   -- Advanced panel controls
-  local emEnable = CreateFrame("CheckButton", "HardcoreHUDEmergencyEnable", advLeft, "OptionsCheckButtonTemplate")
+  local emEnable = SafeCheckButton("HardcoreHUDEmergencyEnable", advLeft, "OptionsCheckButtonTemplate")
   emEnable:ClearAllPoints()
   emEnable:SetPoint("TOPLEFT", advLeft, "TOPLEFT", 0, -8)
   emEnable:SetChecked(HardcoreHUDDB.emergency.enabled)
@@ -465,7 +775,7 @@ end
   if HardcoreHUDDB.breath.secondsThreshold == nil then HardcoreHUDDB.breath.secondsThreshold = 20 end
   -- remove deprecated percentage threshold to avoid confusion
   HardcoreHUDDB.breath.threshold = nil
-  local breathEnable = CreateFrame("CheckButton", "HardcoreHUDBreathEnable", advLeft, "OptionsCheckButtonTemplate")
+  local breathEnable = SafeCheckButton("HardcoreHUDBreathEnable", advLeft, "OptionsCheckButtonTemplate")
   breathEnable:ClearAllPoints()
   breathEnable:SetPoint("TOPLEFT", emEnable, "BOTTOMLEFT", 0, -16)
   breathEnable:SetChecked(HardcoreHUDDB.breath.enabled ~= false)
@@ -478,7 +788,7 @@ end
 
   -- Target Cast Bar toggle
   HardcoreHUDDB.castbar = HardcoreHUDDB.castbar or { enabled = true }
-  local castEnable = CreateFrame("CheckButton", "HardcoreHUDCastBarEnable", advLeft, "OptionsCheckButtonTemplate")
+  local castEnable = SafeCheckButton("HardcoreHUDCastBarEnable", advLeft, "OptionsCheckButtonTemplate")
   castEnable:ClearAllPoints()
   castEnable:SetPoint("TOPLEFT", breathEnable, "BOTTOMLEFT", 0, -16)
   castEnable:SetChecked(HardcoreHUDDB.castbar.enabled ~= false)
@@ -526,7 +836,7 @@ end
 
   -- OOM Soon (mana) blue pulse
   HardcoreHUDDB.oom = HardcoreHUDDB.oom or { enabled = true, threshold = 0.25 }
-  local oomEnable = CreateFrame("CheckButton", "HardcoreHUDOOMEnable", advLeft, "OptionsCheckButtonTemplate")
+  local oomEnable = SafeCheckButton("HardcoreHUDOOMEnable", advLeft, "OptionsCheckButtonTemplate")
   oomEnable:SetPoint("TOPLEFT", emHP, "BOTTOMLEFT", 0, -24)
   oomEnable:SetChecked(HardcoreHUDDB.oom.enabled ~= false)
   if _G[oomEnable:GetName().."Text"] then _G[oomEnable:GetName().."Text"]:SetText("OOM Soon (mana) Blue Pulse") end
@@ -554,7 +864,7 @@ end
 
   -- Suppress when recovery available (potions/spells)
   if HardcoreHUDDB.oom.considerRecovery == nil then HardcoreHUDDB.oom.considerRecovery = true end
-  local oomConsider = CreateFrame("CheckButton", "HardcoreHUDOOMConsiderRecovery", advLeft, "OptionsCheckButtonTemplate")
+  local oomConsider = SafeCheckButton("HardcoreHUDOOMConsiderRecovery", advLeft, "OptionsCheckButtonTemplate")
   oomConsider:SetPoint("TOPLEFT", oomThr, "BOTTOMLEFT", 0, -10)
   oomConsider:SetChecked(HardcoreHUDDB.oom.considerRecovery ~= false)
   if _G[oomConsider:GetName().."Text"] then _G[oomConsider:GetName().."Text"]:SetText("Suppress if recovery ready") end
@@ -566,7 +876,7 @@ end
 
   -- Trackers (Interrupt & Dispel)
   HardcoreHUDDB.trackers = HardcoreHUDDB.trackers or { interruptEnabled = true, interruptSound = true, showInterruptButton = true, dispelEnabled = true, dispelSound = false }
-  local intrEnable = CreateFrame("CheckButton", "HardcoreHUDInterruptEnable", advRight, "OptionsCheckButtonTemplate")
+  local intrEnable = SafeCheckButton("HardcoreHUDInterruptEnable", advRight, "OptionsCheckButtonTemplate")
   intrEnable:ClearAllPoints()
   intrEnable:SetPoint("TOPLEFT", advRight, "TOPLEFT", 0, -8)
   intrEnable:SetChecked(HardcoreHUDDB.trackers.interruptEnabled ~= false)
@@ -577,7 +887,7 @@ end
     if H.EvaluateInterruptState then H.EvaluateInterruptState(false) end
   end)
 
-  local intrSound = CreateFrame("CheckButton", "HardcoreHUDInterruptSound", advRight, "OptionsCheckButtonTemplate")
+  local intrSound = SafeCheckButton("HardcoreHUDInterruptSound", advRight, "OptionsCheckButtonTemplate")
   intrSound:SetPoint("TOPLEFT", intrEnable, "BOTTOMLEFT", 0, -8)
   intrSound:SetChecked(HardcoreHUDDB.trackers.interruptSound ~= false)
   if _G[intrSound:GetName().."Text"] then _G[intrSound:GetName().."Text"]:SetText("Interrupt Sound") end
@@ -586,7 +896,7 @@ end
     print("HardcoreHUD: Interrupt sound "..(HardcoreHUDDB.trackers.interruptSound and "ON" or "OFF"))
   end)
 
-  local intrBtn = CreateFrame("CheckButton", "HardcoreHUDInterruptButtonToggle", advRight, "OptionsCheckButtonTemplate")
+  local intrBtn = SafeCheckButton("HardcoreHUDInterruptButtonToggle", advRight, "OptionsCheckButtonTemplate")
   intrBtn:SetPoint("TOPLEFT", intrSound, "BOTTOMLEFT", 0, -8)
   intrBtn:SetChecked(HardcoreHUDDB.trackers.showInterruptButton ~= false)
   if _G[intrBtn:GetName().."Text"] then _G[intrBtn:GetName().."Text"]:SetText("Show Interrupt Button") end
@@ -598,7 +908,7 @@ end
     end
   end)
 
-  local dispEnable = CreateFrame("CheckButton", "HardcoreHUDDispelEnable", advRight, "OptionsCheckButtonTemplate")
+  local dispEnable = SafeCheckButton("HardcoreHUDDispelEnable", advRight, "OptionsCheckButtonTemplate")
   dispEnable:SetPoint("TOPLEFT", intrBtn, "BOTTOMLEFT", 0, -16)
   dispEnable:SetChecked(HardcoreHUDDB.trackers.dispelEnabled ~= false)
   if _G[dispEnable:GetName().."Text"] then _G[dispEnable:GetName().."Text"]:SetText("Dispel Highlight (self)") end
@@ -608,7 +918,7 @@ end
     if H.UpdateDispelHighlight then H.UpdateDispelHighlight() end
   end)
 
-  local dispSound = CreateFrame("CheckButton", "HardcoreHUDDispelSound", advRight, "OptionsCheckButtonTemplate")
+  local dispSound = SafeCheckButton("HardcoreHUDDispelSound", advRight, "OptionsCheckButtonTemplate")
   dispSound:SetPoint("TOPLEFT", dispEnable, "BOTTOMLEFT", 0, -8)
   dispSound:SetChecked(HardcoreHUDDB.trackers.dispelSound == true)
   if _G[dispSound:GetName().."Text"] then _G[dispSound:GetName().."Text"]:SetText("Dispel Sound") end
@@ -625,7 +935,7 @@ end
   if HardcoreHUDDB.audio.castInterrupted == nil then HardcoreHUDDB.audio.castInterrupted = true end
   if HardcoreHUDDB.audio.oom == nil then HardcoreHUDDB.audio.oom = true end
 
-  local audioEnable = CreateFrame("CheckButton", "HardcoreHUDAudioEnable", advRight, "OptionsCheckButtonTemplate")
+  local audioEnable = SafeCheckButton("HardcoreHUDAudioEnable", advRight, "OptionsCheckButtonTemplate")
   audioEnable:SetPoint("TOPLEFT", dispSound, "BOTTOMLEFT", 0, -16)
   audioEnable:SetChecked(HardcoreHUDDB.audio.enabled ~= false)
   if _G[audioEnable:GetName().."Text"] then _G[audioEnable:GetName().."Text"]:SetText("Audio Cues Enabled") end
@@ -634,7 +944,7 @@ end
     print("HardcoreHUD: Audio cues "..(HardcoreHUDDB.audio.enabled and "ON" or "OFF"))
   end)
 
-  local audioCrit = CreateFrame("CheckButton", "HardcoreHUDAudioCritHP", advRight, "OptionsCheckButtonTemplate")
+  local audioCrit = SafeCheckButton("HardcoreHUDAudioCritHP", advRight, "OptionsCheckButtonTemplate")
   audioCrit:SetPoint("TOPLEFT", audioEnable, "BOTTOMLEFT", 0, -8)
   audioCrit:SetChecked(HardcoreHUDDB.audio.critHP ~= false)
   if _G[audioCrit:GetName().."Text"] then _G[audioCrit:GetName().."Text"]:SetText("Critical HP Sound") end
@@ -642,7 +952,7 @@ end
     HardcoreHUDDB.audio.critHP = self:GetChecked()
   end)
 
-  local audioBreath = CreateFrame("CheckButton", "HardcoreHUDAudioBreath", advRight, "OptionsCheckButtonTemplate")
+  local audioBreath = SafeCheckButton("HardcoreHUDAudioBreath", advRight, "OptionsCheckButtonTemplate")
   audioBreath:SetPoint("TOPLEFT", audioCrit, "BOTTOMLEFT", 0, -8)
   audioBreath:SetChecked(HardcoreHUDDB.audio.breath ~= false)
   if _G[audioBreath:GetName().."Text"] then _G[audioBreath:GetName().."Text"]:SetText("Breath Threshold Sound") end
@@ -650,7 +960,7 @@ end
     HardcoreHUDDB.audio.breath = self:GetChecked()
   end)
 
-  local audioFinish = CreateFrame("CheckButton", "HardcoreHUDAudioCastFinish", advRight, "OptionsCheckButtonTemplate")
+  local audioFinish = SafeCheckButton("HardcoreHUDAudioCastFinish", advRight, "OptionsCheckButtonTemplate")
   audioFinish:SetPoint("TOPLEFT", audioBreath, "BOTTOMLEFT", 0, -8)
   audioFinish:SetChecked(HardcoreHUDDB.audio.castFinish ~= false)
   if _G[audioFinish:GetName().."Text"] then _G[audioFinish:GetName().."Text"]:SetText("Cast Finish Sound") end
@@ -658,7 +968,7 @@ end
     HardcoreHUDDB.audio.castFinish = self:GetChecked()
   end)
 
-  local audioInterrupt = CreateFrame("CheckButton", "HardcoreHUDAudioCastInterrupted", advRight, "OptionsCheckButtonTemplate")
+  local audioInterrupt = SafeCheckButton("HardcoreHUDAudioCastInterrupted", advRight, "OptionsCheckButtonTemplate")
   audioInterrupt:SetPoint("TOPLEFT", audioFinish, "BOTTOMLEFT", 0, -8)
   audioInterrupt:SetChecked(HardcoreHUDDB.audio.castInterrupted ~= false)
   if _G[audioInterrupt:GetName().."Text"] then _G[audioInterrupt:GetName().."Text"]:SetText("Cast Interrupted Sound") end
@@ -666,12 +976,113 @@ end
     HardcoreHUDDB.audio.castInterrupted = self:GetChecked()
   end)
 
-  local audioOOM = CreateFrame("CheckButton", "HardcoreHUDAudioOOM", advRight, "OptionsCheckButtonTemplate")
+  local audioOOM = SafeCheckButton("HardcoreHUDAudioOOM", advRight, "OptionsCheckButtonTemplate")
   audioOOM:SetPoint("TOPLEFT", audioInterrupt, "BOTTOMLEFT", 0, -8)
   audioOOM:SetChecked(HardcoreHUDDB.audio.oom ~= false)
   if _G[audioOOM:GetName().."Text"] then _G[audioOOM:GetName().."Text"]:SetText("OOM Sound") end
   audioOOM:SetScript("OnClick", function(self)
     HardcoreHUDDB.audio.oom = self:GetChecked()
+  end)
+
+  -- ====== UTILITIES PANEL ======
+  -- Initialize utilities layout settings
+  HardcoreHUDDB.utilities = HardcoreHUDDB.utilities or {}
+  if HardcoreHUDDB.utilities.buttonSize == nil then HardcoreHUDDB.utilities.buttonSize = 28 end
+  if HardcoreHUDDB.utilities.buttonGap == nil then HardcoreHUDDB.utilities.buttonGap = 8 end
+  if HardcoreHUDDB.utilities.independent == nil then HardcoreHUDDB.utilities.independent = false end
+  if HardcoreHUDDB.utilities.offsetX == nil then HardcoreHUDDB.utilities.offsetX = 0 end
+  if HardcoreHUDDB.utilities.offsetY == nil then HardcoreHUDDB.utilities.offsetY = -36 end
+
+  -- Button Size Slider
+  local utilButtonSize = CreateFrame("Slider", "HardcoreHUDUtilButtonSize", panelUtilities, "OptionsSliderTemplate")
+  utilButtonSize:SetPoint("TOPLEFT", panelUtilities, "TOPLEFT", 20, -8)
+  utilButtonSize:SetMinMaxValues(20, 48)
+  utilButtonSize:SetValueStep(2)
+  utilButtonSize:SetValue(HardcoreHUDDB.utilities.buttonSize)
+  if _G[utilButtonSize:GetName().."Low"] then _G[utilButtonSize:GetName().."Low"]:SetText("20") end
+  if _G[utilButtonSize:GetName().."High"] then _G[utilButtonSize:GetName().."High"]:SetText("48") end
+  if _G[utilButtonSize:GetName().."Text"] then _G[utilButtonSize:GetName().."Text"]:SetText("Button Size") end
+  utilButtonSize:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.utilities.buttonSize = val
+    if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+  end)
+
+  -- Button Gap Slider
+  local utilButtonGap = CreateFrame("Slider", "HardcoreHUDUtilButtonGap", panelUtilities, "OptionsSliderTemplate")
+  utilButtonGap:ClearAllPoints()
+  utilButtonGap:SetPoint("TOPLEFT", utilButtonSize, "BOTTOMLEFT", 0, -34)
+  utilButtonGap:SetMinMaxValues(2, 20)
+  utilButtonGap:SetValueStep(1)
+  utilButtonGap:SetValue(HardcoreHUDDB.utilities.buttonGap)
+  if _G[utilButtonGap:GetName().."Low"] then _G[utilButtonGap:GetName().."Low"]:SetText("2") end
+  if _G[utilButtonGap:GetName().."High"] then _G[utilButtonGap:GetName().."High"]:SetText("20") end
+  if _G[utilButtonGap:GetName().."Text"] then _G[utilButtonGap:GetName().."Text"]:SetText("Button Gap") end
+  utilButtonGap:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.utilities.buttonGap = val
+    if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+  end)
+
+  -- Independent Position Toggle
+  local utilIndependent = SafeCheckButton("HardcoreHUDUtilIndependent", panelUtilities, "OptionsCheckButtonTemplate")
+  utilIndependent:ClearAllPoints()
+  utilIndependent:SetPoint("TOPLEFT", utilButtonGap, "BOTTOMLEFT", 0, -20)
+  utilIndependent:SetChecked(HardcoreHUDDB.utilities.independent == true)
+  if _G[utilIndependent:GetName().."Text"] then _G[utilIndependent:GetName().."Text"]:SetText("Independent Position") end
+  utilIndependent:SetScript("OnClick", function(self)
+    HardcoreHUDDB.utilities.independent = self:GetChecked()
+    if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+    print("HardcoreHUD: Utility buttons "..(HardcoreHUDDB.utilities.independent and "INDEPENDENT" or "LINKED to health bar"))
+  end)
+
+  -- X Offset Slider (when independent)
+  local utilOffsetX = CreateFrame("Slider", "HardcoreHUDUtilOffsetX", panelUtilities, "OptionsSliderTemplate")
+  utilOffsetX:ClearAllPoints()
+  utilOffsetX:SetPoint("TOPLEFT", utilIndependent, "BOTTOMLEFT", 0, -20)
+  utilOffsetX:SetMinMaxValues(-500, 500)
+  utilOffsetX:SetValueStep(5)
+  utilOffsetX:SetValue(HardcoreHUDDB.utilities.offsetX)
+  if _G[utilOffsetX:GetName().."Low"] then _G[utilOffsetX:GetName().."Low"]:SetText("-500") end
+  if _G[utilOffsetX:GetName().."High"] then _G[utilOffsetX:GetName().."High"]:SetText("500") end
+  if _G[utilOffsetX:GetName().."Text"] then _G[utilOffsetX:GetName().."Text"]:SetText("X Offset (Left/Right)") end
+  utilOffsetX:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.utilities.offsetX = val
+    if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+  end)
+
+  -- Y Offset Slider (when independent)
+  local utilOffsetY = CreateFrame("Slider", "HardcoreHUDUtilOffsetY", panelUtilities, "OptionsSliderTemplate")
+  utilOffsetY:ClearAllPoints()
+  utilOffsetY:SetPoint("TOPLEFT", utilOffsetX, "BOTTOMLEFT", 0, -34)
+  utilOffsetY:SetMinMaxValues(-400, 400)
+  utilOffsetY:SetValueStep(5)
+  utilOffsetY:SetValue(HardcoreHUDDB.utilities.offsetY)
+  if _G[utilOffsetY:GetName().."Low"] then _G[utilOffsetY:GetName().."Low"]:SetText("-400") end
+  if _G[utilOffsetY:GetName().."High"] then _G[utilOffsetY:GetName().."High"]:SetText("400") end
+  if _G[utilOffsetY:GetName().."Text"] then _G[utilOffsetY:GetName().."Text"]:SetText("Y Offset (Down/Up)") end
+  utilOffsetY:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.utilities.offsetY = val
+    if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+  end)
+
+  -- Reset Button for Utilities
+  local utilReset = CreateFrame("Button", nil, panelUtilities, "UIPanelButtonTemplate")
+  utilReset:ClearAllPoints()
+  utilReset:SetPoint("TOPLEFT", utilOffsetY, "BOTTOMLEFT", 0, -20)
+  utilReset:SetSize(150, 24)
+  utilReset:SetText("Reset to Defaults")
+  utilReset:SetScript("OnClick", function()
+    HardcoreHUDDB.utilities.buttonSize = 28
+    HardcoreHUDDB.utilities.buttonGap = 8
+    HardcoreHUDDB.utilities.independent = false
+    HardcoreHUDDB.utilities.offsetX = 0
+    HardcoreHUDDB.utilities.offsetY = -36
+    utilButtonSize:SetValue(28)
+    utilButtonGap:SetValue(8)
+    utilIndependent:SetChecked(false)
+    utilOffsetX:SetValue(0)
+    utilOffsetY:SetValue(-36)
+    if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+    print("HardcoreHUD: Utility buttons reset to defaults")
   end)
 
   local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -717,15 +1128,57 @@ end
 
   -- Minimal slash options remain
   SLASH_HARDCOREHUD1 = "/hardhud"
+  SLASH_HARDCOREHUD2 = "/hh"
   SlashCmdList["HARDCOREHUD"] = function(msg)
     local a = {}; for t in string.gmatch(msg, "[^%s]+") do table.insert(a,t) end
     local cmd = string.lower(a[1] or "help")
+    if cmd == "help" or cmd == "options" or cmd == "" then
+      if H.optionsFrame then
+        if H.optionsFrame:IsShown() then
+          H.optionsFrame:Hide()
+        else
+          H.optionsFrame:Show()
+        end
+      end
+      return
+    end
     if cmd == "help" then
       print("HardcoreHUD:")
       print("/hardhud width <n> | height <n>")
       print("/hardhud color hp|mana|energy|rage r g b")
       print("/hardhud lock | unlock")
       print("/hardhud warn critical on|off | skull on|off")
+      print("/hardhud testoom | testhp - Test overlays")
+    elseif cmd == "testoom" then
+      if not H.oomOverlay then H.InitOOMOverlay() end
+      if H.oomOverlay then
+        H.oomOverlay._pulse.active = true
+        local ok, err = pcall(function() H.oomOverlay:Show() end)
+        if ok then
+          print("OOM overlay shown - hiding in 3 seconds")
+          C_Timer.After(3, function()
+            H.oomOverlay._pulse.active = false
+            pcall(function() H.oomOverlay:Hide() end)
+          end)
+        else
+          print("OOM overlay Show() failed:", err)
+        end
+      else
+        print("OOM overlay failed to initialize")
+      end
+    elseif cmd == "testhp" then
+      if not H.critOverlay then H.InitCriticalOverlay() end
+      if H.critOverlay then
+        local ok, err = pcall(function() H.critOverlay:Show() end)
+        if ok then
+          print("Critical HP overlay shown - hiding in 3 seconds")
+          C_Timer.After(3, function() pcall(function() H.critOverlay:Hide() end) end)
+        else
+          print("Critical HP overlay Show() failed:", err)
+        end
+      else
+        print("Critical HP overlay failed to initialize")
+      end
     elseif cmd == "width" and tonumber(a[2]) then
       local w = tonumber(a[2]); HardcoreHUDDB.size.width=w; H.root:SetWidth(w); H.bars.hp:SetWidth(w); H.bars.pow:SetWidth(w); if H.bars.fs then H.bars.fs:SetWidth(w) end; if H.bars.tick then H.bars.tick:SetWidth(w) end; H.LayoutCombo()
     elseif cmd == "height" and tonumber(a[2]) then
@@ -815,4 +1268,145 @@ end
       print("/hardhud help")
     end
   end
+
+  -- Target Marks Panel
+  HardcoreHUDDB.targetMarks = HardcoreHUDDB.targetMarks or { enabled = true, locked = false, pos = { x = 0, y = -280 } }
+  
+  local tmTitle = panelTargetMarks:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  tmTitle:SetPoint("TOPLEFT", panelTargetMarks, "TOPLEFT", 0, -8)
+  tmTitle:SetText("Target Mark Bar")
+
+  local tmToggle = SafeCheckButton("HardcoreHUDTargetMarksToggle", panelTargetMarks, "OptionsCheckButtonTemplate")
+  tmToggle:ClearAllPoints()
+  tmToggle:SetPoint("TOPLEFT", tmTitle, "BOTTOMLEFT", 0, -16)
+  tmToggle:SetChecked(HardcoreHUDDB.targetMarks.enabled ~= false)
+  if _G[tmToggle:GetName().."Text"] then _G[tmToggle:GetName().."Text"]:SetText("Show Target Mark Bar") end
+  tmToggle:SetScript("OnClick", function(self)
+    local isChecked = self:GetChecked()
+    HardcoreHUDDB.targetMarks.enabled = isChecked
+    if not H.targetMarkBar then H.InitTargetMarkBar() end
+    if isChecked then
+      H.targetMarkBar:Show()
+      print("HardcoreHUD: Target mark bar ON")
+    else
+      H.targetMarkBar:Hide()
+      print("HardcoreHUD: Target mark bar OFF")
+    end
+  end)
+  tmToggle:SetFrameStrata("FULLSCREEN_DIALOG")
+  tmToggle:SetFrameLevel(panelTargetMarks:GetFrameLevel()+1)
+
+  local tmDesc = panelTargetMarks:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  tmDesc:SetPoint("TOPLEFT", tmToggle, "BOTTOMLEFT", 0, -20)
+  tmDesc:SetText("Mark your target with raid markers (Star, Circle, Diamond, etc)\nDrag the bar to reposition it\nButtons available in combat")
+  tmDesc:SetTextColor(0.7, 0.7, 0.7, 1)
+  tmDesc:SetJustifyH("LEFT")
+
+  -- Leveling Panel
+  HardcoreHUDDB.leveling = HardcoreHUDDB.leveling or { enabled = true, locked = false, pos = { x = 0, y = -400 }, showXPBar = true, showRate = true, showTimeToLevel = true, showRested = true, showSessionTime = true }
+  
+  local lvTitle = panelLeveling:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  lvTitle:SetPoint("TOPLEFT", panelLeveling, "TOPLEFT", 0, -8)
+  lvTitle:SetText("Leveling Tracker")
+
+  local lvToggle = SafeCheckButton("HardcoreHUDLevelingToggle", panelLeveling, "OptionsCheckButtonTemplate")
+  lvToggle:ClearAllPoints()
+  lvToggle:SetPoint("TOPLEFT", lvTitle, "BOTTOMLEFT", 0, -16)
+  lvToggle:SetChecked(HardcoreHUDDB.leveling.enabled ~= false)
+  if _G[lvToggle:GetName().."Text"] then _G[lvToggle:GetName().."Text"]:SetText("Show Leveling Tracker") end
+  lvToggle:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.enabled = self:GetChecked()
+    if not H.levelingTracker then H.InitLevelingTracker() end
+    if self:GetChecked() then
+      H.levelingTracker:Show()
+      print("HardcoreHUD: Leveling tracker ON")
+    else
+      H.levelingTracker:Hide()
+      print("HardcoreHUD: Leveling tracker OFF")
+    end
+  end)
+
+  -- Show options
+  local lvXPBar = SafeCheckButton("HardcoreHUDLevelingXPBar", panelLeveling, "OptionsCheckButtonTemplate")
+  lvXPBar:ClearAllPoints()
+  lvXPBar:SetPoint("TOPLEFT", lvToggle, "BOTTOMLEFT", 0, -12)
+  lvXPBar:SetChecked(HardcoreHUDDB.leveling.showXPBar ~= false)
+  if _G[lvXPBar:GetName().."Text"] then _G[lvXPBar:GetName().."Text"]:SetText("Show XP Bar") end
+  lvXPBar:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.showXPBar = self:GetChecked()
+    if H.UpdateLevelingTracker then H.UpdateLevelingTracker() end
+  end)
+
+  local lvRate = SafeCheckButton("HardcoreHUDLevelingRate", panelLeveling, "OptionsCheckButtonTemplate")
+  lvRate:ClearAllPoints()
+  lvRate:SetPoint("TOPLEFT", lvXPBar, "BOTTOMLEFT", 0, -10)
+  lvRate:SetChecked(HardcoreHUDDB.leveling.showRate ~= false)
+  if _G[lvRate:GetName().."Text"] then _G[lvRate:GetName().."Text"]:SetText("Show XP/Hour Rate") end
+  lvRate:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.showRate = self:GetChecked()
+    if H.UpdateLevelingTracker then H.UpdateLevelingTracker() end
+  end)
+
+  local lvTime = SafeCheckButton("HardcoreHUDLevelingTime", panelLeveling, "OptionsCheckButtonTemplate")
+  lvTime:ClearAllPoints()
+  lvTime:SetPoint("TOPLEFT", lvRate, "BOTTOMLEFT", 0, -10)
+  lvTime:SetChecked(HardcoreHUDDB.leveling.showTimeToLevel ~= false)
+  if _G[lvTime:GetName().."Text"] then _G[lvTime:GetName().."Text"]:SetText("Show Time to Level") end
+  lvTime:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.showTimeToLevel = self:GetChecked()
+    if H.UpdateLevelingTracker then H.UpdateLevelingTracker() end
+  end)
+
+  local lvRested = SafeCheckButton("HardcoreHUDLevelingRested", panelLeveling, "OptionsCheckButtonTemplate")
+  lvRested:ClearAllPoints()
+  lvRested:SetPoint("TOPLEFT", lvTime, "BOTTOMLEFT", 0, -10)
+  lvRested:SetChecked(HardcoreHUDDB.leveling.showRested ~= false)
+  if _G[lvRested:GetName().."Text"] then _G[lvRested:GetName().."Text"]:SetText("Show Rested XP") end
+  lvRested:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.showRested = self:GetChecked()
+    if H.UpdateLevelingTracker then H.UpdateLevelingTracker() end
+  end)
+
+  local lvSession = SafeCheckButton("HardcoreHUDLevelingSession", panelLeveling, "OptionsCheckButtonTemplate")
+  lvSession:ClearAllPoints()
+  lvSession:SetPoint("TOPLEFT", lvRested, "BOTTOMLEFT", 0, -10)
+  lvSession:SetChecked(HardcoreHUDDB.leveling.showSessionTime ~= false)
+  if _G[lvSession:GetName().."Text"] then _G[lvSession:GetName().."Text"]:SetText("Show Session Time") end
+  lvSession:SetScript("OnClick", function(self)
+    HardcoreHUDDB.leveling.showSessionTime = self:GetChecked()
+    if H.UpdateLevelingTracker then H.UpdateLevelingTracker() end
+  end)
+
+  local lvDesc = panelLeveling:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  lvDesc:SetPoint("TOPLEFT", lvSession, "BOTTOMLEFT", 0, -16)
+  lvDesc:SetText("Displays XP progress, leveling speed, and time to level\nSelect which information to display\nDrag to reposition or lock position")
+  lvDesc:SetTextColor(0.7, 0.7, 0.7, 1)
+  lvDesc:SetJustifyH("LEFT")
+  
+  -- Register with Blizzard Interface Options on PLAYER_LOGIN
+  local regFrame = CreateFrame("Frame")
+  regFrame:RegisterEvent("PLAYER_LOGIN")
+  regFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_LOGIN" then
+      -- Set frame properties for Interface Options
+      f.name = "HardcoreHUD"
+      f.parent = nil
+      f.okay = function() end
+      f.cancel = function() end
+      f.default = function()
+        print("HardcoreHUD: Reset to defaults (not implemented)")
+      end
+      f.refresh = function() end
+      
+      -- Try registration
+      if InterfaceOptions_AddCategory then
+        InterfaceOptions_AddCategory(f)
+        print("HardcoreHUD: Registered with Interface Options")
+      else
+        print("HardcoreHUD: Classic Interface Options API not available - use /hh to open options")
+      end
+      
+      self:UnregisterEvent("PLAYER_LOGIN")
+    end
+  end)
 end

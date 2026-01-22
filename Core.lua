@@ -288,10 +288,10 @@ function H.InitInterruptTracker()
   H.cast._lastInterruptToken = nil
   -- Configure interrupt button spell/icon
   local sp = ChooseInterrupt()
-  if H.cast.interruptButton and sp then
+    if H.cast.interruptButton and sp then
     H.cast.interruptButton.icon:SetTexture(sp.icon)
-    H.cast.interruptButton:SetAttribute("type", "spell")
-    H.cast.interruptButton:SetAttribute("spell", sp.name or sp.id)
+    H.QueueSetAttribute(H.cast.interruptButton, "type", "spell")
+    H.QueueSetAttribute(H.cast.interruptButton, "spell", sp.name or sp.id)
   end
 end
 
@@ -326,16 +326,16 @@ function H.EvaluateInterruptState(notInterruptible)
     if H.cast.interruptButton and (HardcoreHUDDB.trackers.showInterruptButton ~= false) then
       local sp = ChooseInterrupt()
       if sp then
-        H.cast.interruptButton.icon:SetTexture(sp.icon)
-        H.cast.interruptButton:SetAttribute("spell", sp.name or sp.id)
+      H.cast.interruptButton.icon:SetTexture(sp.icon)
+      H.QueueSetAttribute(H.cast.interruptButton, "spell", sp.name or sp.id)
         -- only show if spell is likely known/ready
         if SpellKnown(sp.id) and SpellReady(sp.id) then
-          H.cast.interruptButton:Show()
+          pcall(function() H.cast.interruptButton:Show() end)
         else
-          H.cast.interruptButton:Hide()
+          pcall(function() H.cast.interruptButton:Hide() end)
         end
       else
-        H.cast.interruptButton:Hide()
+        pcall(function() H.cast.interruptButton:Hide() end)
       end
     end
   else
@@ -415,7 +415,7 @@ function H.UpdateDispelHighlight()
     if not H.dispel or not H.dispel.frame then H.InitDispelHighlight() end
     if H.dispel then
       H.dispel._pulse.active = true
-      H.dispel.frame:Show()
+      pcall(function() H.dispel.frame:Show() end)
       if HardcoreHUDDB.trackers.dispelSound and not H.dispel._played then
         H.dispel._played = true
         if PlaySoundFile then PlaySoundFile("Sound/Interface/AlarmClockWarning3.wav") end
@@ -424,7 +424,7 @@ function H.UpdateDispelHighlight()
   else
     if H.dispel then
       H.dispel._pulse.active = false
-      if H.dispel.frame then H.dispel.frame:Hide() end
+      if H.dispel.frame then pcall(function() H.dispel.frame:Hide() end) end
       H.dispel._played = false
     end
   end
@@ -525,12 +525,12 @@ function H.UpdateBreathWarning()
   if remainingSec <= triggerSec then
     if not H.breathOverlay then H.InitBreathWarning() end
     if H.breathOverlay and not H.breathOverlay:IsShown() then
-      H.breathOverlay:Show()
+      pcall(function() H.breathOverlay:Show() end)
       if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled and HardcoreHUDDB.audio.breath then
         if PlaySoundFile then PlaySoundFile("Sound/Interface/MapPing.wav") end
       end
     elseif H.breathOverlay then
-      H.breathOverlay:Show()
+      pcall(function() H.breathOverlay:Show() end)
     end
   else
     H.HideBreathWarning()
@@ -543,6 +543,15 @@ if H.InitBreathWarning then H.InitBreathWarning() end
 -- Critical HP red pulsing overlay
 HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
 if HardcoreHUDDB.warnings.criticalOverlayEnabled == nil then HardcoreHUDDB.warnings.criticalOverlayEnabled = true end
+
+-- Warnings system defaults
+if HardcoreHUDDB.warnings.enabled == nil then HardcoreHUDDB.warnings.enabled = true end
+
+-- Leash tracking defaults
+if HardcoreHUDDB.warnings.leash == nil then HardcoreHUDDB.warnings.leash = { enabled = true, distance = 50, sound = true } end
+
+-- Range display defaults
+if HardcoreHUDDB.warnings.rangeDisplay == nil then HardcoreHUDDB.warnings.rangeDisplay = { enabled = true, talentBonus = 0 } end
 
 function H.InitCriticalOverlay()
   if H.critOverlay then return end
@@ -576,7 +585,7 @@ function H.InitCriticalOverlay()
 end
 
 function H.HideCriticalOverlay()
-  if H.critOverlay then H.critOverlay:Hide() end
+  if H.critOverlay then pcall(function() H.critOverlay:Hide() end) end
 end
 
 function H.UpdateCriticalOverlay()
@@ -592,12 +601,14 @@ function H.UpdateCriticalOverlay()
   if pct <= thresh and (HardcoreHUDDB.warnings.enabled ~= false) and (HardcoreHUDDB.warnings.criticalHP ~= false) then
     if not H.critOverlay then H.InitCriticalOverlay() end
     if H.critOverlay and not H.critOverlay:IsShown() then
-      H.critOverlay:Show()
+      local ok, err = pcall(function() H.critOverlay:Show() end)
+      if not ok and HardcoreHUDDB.debug then print("HardcoreHUD CritHP Show error:", err) end
       if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled and HardcoreHUDDB.audio.critHP then
         if PlaySoundFile then PlaySoundFile("Sound/Interface/AlarmClockWarning2.wav") end
       end
     elseif H.critOverlay then
-      H.critOverlay:Show()
+      local ok, err = pcall(function() H.critOverlay:Show() end)
+      if not ok and HardcoreHUDDB.debug then print("HardcoreHUD CritHP Show error:", err) end
     end
   else
     H.HideCriticalOverlay()
@@ -622,13 +633,60 @@ HardcoreHUDDB = HardcoreHUDDB or {
   },
   warnings = { criticalHP = true, multiAggro = true, levelElite = true, multiAggroThreshold = 2 },
   audio = { enabled = true },
+  gtfo = { enabled = true, highDamage = true, lowDamage = true, fallAlert = true, volume = 1.0, lastAlert = 0 },
+  thanksBuff = { enabled = true, onlyOutsideGroup = true, message = "Thanks for the buff!" },
+  targetMarks = { enabled = true, locked = false, pos = { x = 0, y = -280 } },
+  leveling = { enabled = true, locked = false, pos = { x = 0, y = -400 }, showXPBar = true, showRate = true, showTimeToLevel = true, showRested = true, showSessionTime = true },
   lock = true,
 }
 -- Ensure defaults exist when upgrading from older SavedVariables
 if HardcoreHUDDB.lock == nil then HardcoreHUDDB.lock = true end
+if HardcoreHUDDB.gtfo == nil then HardcoreHUDDB.gtfo = { enabled = true, highDamage = true, lowDamage = true, fallAlert = true, volume = 1.0, lastAlert = 0 } end
+if HardcoreHUDDB.thanksBuff == nil then HardcoreHUDDB.thanksBuff = { enabled = true, onlyOutsideGroup = true, message = "Thanks for the buff!" } end
+if HardcoreHUDDB.targetMarks == nil then HardcoreHUDDB.targetMarks = { enabled = true, locked = false, pos = { x = 0, y = -280 } } end
+if HardcoreHUDDB.leveling == nil then HardcoreHUDDB.leveling = { enabled = true, locked = false, pos = { x = 0, y = -400 }, showXPBar = true, showRate = true, showTimeToLevel = true, showRested = true, showSessionTime = true } end
 
 local f = CreateFrame("Frame", addonName.."Frame", UIParent)
 H.root = f
+-- CRITICAL: Override Hide() and SetShown() to keep HUD bars always visible
+local originalHideRoot = f.Hide
+local originalSetShown = f.SetShown
+f.Hide = function(self) 
+  -- Allow hiding if manually toggled via minimap menu
+  if HardcoreHUDDB.manuallyHidden then
+    originalHideRoot(self)
+  end
+end
+f.SetShown = function(self, shown) 
+  if not shown and not HardcoreHUDDB.manuallyHidden then 
+    return 
+  end 
+  originalSetShown(self, shown) 
+end
+f._OriginalHide = originalHideRoot
+f._OriginalSetShown = originalSetShown
+-- Ensure frame stays visible by preventing UIParent fade
+f:SetIgnoreParentAlpha(true)
+-- CRITICAL: Force frame to stay visible via OnUpdate hook
+f:SetScript("OnUpdate", function(self)
+  -- Don't force visibility if manually hidden
+  if HardcoreHUDDB.manuallyHidden then
+    return
+  end
+  
+  if not self:IsShown() then
+    self:Show()
+  end
+  if self:GetAlpha() < 1 then
+    self:SetAlpha(1)
+  end
+  -- Re-parent to WorldFrame if UIParent is hidden (happens when char window opens)
+  if UIParent and not UIParent:IsShown() and self:GetParent() == UIParent then
+    self:SetParent(WorldFrame or UIParent)
+  elseif UIParent and UIParent:IsShown() and self:GetParent() ~= UIParent then
+    self:SetParent(UIParent)
+  end
+end)
 -- Guard missing position defaults
 HardcoreHUDDB.pos = HardcoreHUDDB.pos or { x = 0, y = -150 }
 f:ClearAllPoints()
@@ -646,30 +704,51 @@ f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); local p,_,rp
 
 -- Event hub
 local ev = CreateFrame("Frame")
-ev:RegisterEvent("PLAYER_LOGIN")
-ev:RegisterEvent("PLAYER_ENTERING_WORLD")
-ev:RegisterEvent("UNIT_POWER")
-ev:RegisterEvent("UNIT_MAXPOWER")
-ev:RegisterEvent("UNIT_ENERGY")
-ev:RegisterEvent("UNIT_RAGE")
-ev:RegisterEvent("UNIT_MANA")
-ev:RegisterEvent("UNIT_DISPLAYPOWER")
-ev:RegisterEvent("UNIT_HEALTH")
-ev:RegisterEvent("UNIT_MAXHEALTH")
-ev:RegisterEvent("PLAYER_TARGET_CHANGED")
-ev:RegisterEvent("UNIT_COMBO_POINTS")
-ev:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-ev:RegisterEvent("UNIT_TARGET")
-ev:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
-ev:RegisterEvent("BAG_UPDATE_COOLDOWN")
-ev:RegisterEvent("BAG_UPDATE")
-ev:RegisterEvent("SPELLS_CHANGED")
-ev:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+local function TryRegister(frame, evname)
+  if not frame or not evname then return end
+  pcall(function() frame:RegisterEvent(evname) end)
+end
+TryRegister(ev, "PLAYER_LOGIN")
+TryRegister(ev, "PLAYER_ENTERING_WORLD")
+TryRegister(ev, "PLAYER_REGEN_DISABLED")
+TryRegister(ev, "PLAYER_REGEN_ENABLED")
+TryRegister(ev, "UNIT_POWER")
+TryRegister(ev, "UNIT_MAXPOWER")
+TryRegister(ev, "UNIT_ENERGY")
+TryRegister(ev, "UNIT_RAGE")
+TryRegister(ev, "UNIT_MANA")
+TryRegister(ev, "UNIT_DISPLAYPOWER")
+TryRegister(ev, "UNIT_HEALTH")
+TryRegister(ev, "UNIT_MAXHEALTH")
+TryRegister(ev, "PLAYER_TARGET_CHANGED")
+TryRegister(ev, "UNIT_COMBO_POINTS")
+TryRegister(ev, "COMBAT_LOG_EVENT_UNFILTERED")
+TryRegister(ev, "UNIT_TARGET")
+TryRegister(ev, "UNIT_THREAT_LIST_UPDATE")
+TryRegister(ev, "BAG_UPDATE_COOLDOWN")
+TryRegister(ev, "BAG_UPDATE")
+TryRegister(ev, "SPELLS_CHANGED")
+TryRegister(ev, "SPELL_UPDATE_COOLDOWN")
 ev:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
     H.Init()
     H.UpdateAll()
     if H.UpdateOOMOverlay then H.UpdateOOMOverlay(true) end
+    if H.InitTargetMarkBar then H.InitTargetMarkBar() end
+    if H.targetMarkBar and HardcoreHUDDB.targetMarks and HardcoreHUDDB.targetMarks.enabled then H.targetMarkBar:Show() end
+    if H.InitLevelingTracker then H.InitLevelingTracker() end
+    if H.levelingTracker and HardcoreHUDDB.leveling and HardcoreHUDDB.leveling.enabled then H.levelingTracker:Show() end
+    if H.InitThanksBuff then H.InitThanksBuff() end
+    if H.InitGTFO then H.InitGTFO() end
+    if H.BuildGTFOFrame then H.BuildGTFOFrame() end
+    H._sessionStartTime = GetTime()
+  elseif event == "PLAYER_REGEN_DISABLED" then
+    -- Start of combat
+    H._combatStartTime = GetTime()
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    -- End of combat - hide leash bar
+    if H.leashWarn then H.leashWarn:Hide() end
+    H._combatStartTime = nil
   elseif event == "UNIT_POWER" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER" or event == "UNIT_ENERGY" or event == "UNIT_RAGE" or event == "UNIT_MANA" then
     local unit = ...
     if unit == "player" then
@@ -747,8 +826,8 @@ function H.Init()
     if H.SyncLockCheckbox then H.SyncLockCheckbox() end
     self:SetScript("OnUpdate", nil)
   end)
-  -- Create minimap button
-  if Minimap and HardcoreHUDOptions and not _G["HardcoreHUDMiniMap"] then
+  -- Create minimap button (do not wait for options frame to exist)
+  if Minimap and not _G["HardcoreHUDMiniMap"] then
     local mm = CreateFrame("Button", "HardcoreHUDMiniMap", Minimap)
     mm:SetSize(20,20)
     mm:SetFrameStrata("HIGH")
@@ -760,8 +839,16 @@ function H.Init()
     -- Right-click dropdown menu
     local menu = CreateFrame("Frame", "HardcoreHUDMiniMapMenu", UIParent, "UIDropDownMenuTemplate")
     local function ToggleHUD()
-      local shown = H.root:IsShown()
-      if shown then H.root:Hide() else H.root:Show() end
+      -- Use special flag to allow hiding via menu
+      if H.root:IsShown() then
+        HardcoreHUDDB.manuallyHidden = true
+        if H.root._OriginalHide then
+          H.root._OriginalHide(H.root)
+        end
+      else
+        HardcoreHUDDB.manuallyHidden = false
+        H.root:Show()
+      end
     end
     local function ToggleLock()
       HardcoreHUDDB.lock = not HardcoreHUDDB.lock
@@ -841,7 +928,7 @@ local function PlayerHasManaRecoveryReady()
   if class and RecoverySpellsByClass[class] then
     for _, id in ipairs(RecoverySpellsByClass[class]) do table.insert(list, id) end
   end
-  if race and RecoverySpellsByRace[string.upper(race)] then
+  if type(race) == "string" and RecoverySpellsByRace[string.upper(race)] then
     for _, id in ipairs(RecoverySpellsByRace[string.upper(race)]) do table.insert(list, id) end
   end
   for _, id in ipairs(list) do
@@ -874,11 +961,10 @@ end
 
 function H.InitOOMOverlay()
   if H.oomOverlay then return end
-  local anchor = (H.bars and H.bars.pow) or H.root or UIParent
-  local f = CreateFrame("Frame", nil, anchor)
-  f:SetAllPoints(anchor)
+  local f = CreateFrame("Frame", nil, UIParent)
+  f:SetAllPoints(UIParent)
   f:SetFrameStrata("FULLSCREEN")
-  f:SetFrameLevel((anchor:GetFrameLevel() or 0) + 55)
+  f:SetFrameLevel((UIParent:GetFrameLevel() or 0) + 205)
   local tex = f:CreateTexture(nil, "OVERLAY")
   tex:SetAllPoints(f)
   tex:SetColorTexture(0.2, 0.6, 1.0, 0)
@@ -910,19 +996,33 @@ function H.InitOOMOverlay()
 end
 
 function H.UpdateOOMOverlay(force)
+  -- Skip visibility updates during combat; defer to PLAYER_REGEN_ENABLED
+  if InCombatLockdown() then
+    return
+  end
+  
   if not HardcoreHUDDB.oom or HardcoreHUDDB.oom.enabled == false then
-    if H.oomOverlay then H.oomOverlay:Hide(); H.oomOverlay._pulse.active = false end
+    if H.oomOverlay then
+      pcall(function() H.oomOverlay:Hide() end)
+      H.oomOverlay._pulse.active = false
+    end
     return
   end
   local ptype = UnitPowerType and UnitPowerType("player") or 1
   if ptype ~= 0 then -- only mana
-    if H.oomOverlay then H.oomOverlay:Hide(); H.oomOverlay._pulse.active = false end
+    if H.oomOverlay then
+      pcall(function() H.oomOverlay:Hide() end)
+      H.oomOverlay._pulse.active = false
+    end
     return
   end
-  local cur = (UnitPower and UnitPower("player", 0)) or UnitMana("player")
-  local max = (UnitPowerMax and UnitPowerMax("player", 0)) or UnitManaMax("player")
+  local cur = (UnitPower and UnitPower("player", 0)) or (UnitMana and UnitMana("player")) or 0
+  local max = (UnitPowerMax and UnitPowerMax("player", 0)) or (UnitManaMax and UnitManaMax("player")) or 0
   if not max or max <= 0 then
-    if H.oomOverlay then H.oomOverlay:Hide(); H.oomOverlay._pulse.active = false end
+    if H.oomOverlay then
+      pcall(function() H.oomOverlay:Hide() end)
+      H.oomOverlay._pulse.active = false
+    end
     return
   end
   local pct = cur / max
@@ -938,24 +1038,26 @@ function H.UpdateOOMOverlay(force)
       H.manaBtn.itemID = readyPotion
       local itemName = GetItemInfo and GetItemInfo(readyPotion)
       local attrVal = itemName and itemName or ("item:"..tostring(readyPotion))
-      if H.manaBtn.SetAttribute then H.manaBtn:SetAttribute("item", attrVal) end
+      if H.manaBtn.SetAttribute then H.QueueSetAttribute(H.manaBtn, "item", attrVal) end
       if H.manaBtn.icon and GetItemIcon then H.manaBtn.icon:SetTexture(GetItemIcon(readyPotion) or "Interface/Icons/INV_Potion_76") end
-      H.manaBtn:Show()
+      pcall(function() H.manaBtn:Show() end)
     else
-      H.manaBtn:Hide()
+      pcall(function() H.manaBtn:Hide() end)
     end
   end
   if shouldShow then
     if not H.oomOverlay then H.InitOOMOverlay() end
     if H.oomOverlay and not H.oomOverlay:IsShown() then
       H.oomOverlay._pulse.active = true
-      H.oomOverlay:Show()
+      local ok, err = pcall(function() H.oomOverlay:Show() end)
+      if not ok and HardcoreHUDDB.debug then print("HardcoreHUD OOM Show error:", err) end
       if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled and HardcoreHUDDB.audio.oom then
         if PlaySoundFile then PlaySoundFile("Sound/Interface/MapPing.wav") end
       end
     elseif H.oomOverlay then
       H.oomOverlay._pulse.active = true
-      H.oomOverlay:Show()
+      local ok, err = pcall(function() H.oomOverlay:Show() end)
+      if not ok and HardcoreHUDDB.debug then print("HardcoreHUD OOM Show error:", err) end
     end
   else
     if HardcoreHUDDB.debug and HardcoreHUDDB.debug.oom then
@@ -969,7 +1071,10 @@ function H.UpdateOOMOverlay(force)
         print("HardcoreHUD OOM: suppressed (overlay disabled or unknown)")
       end
     end
-    if H.oomOverlay then H.oomOverlay._pulse.active = false; H.oomOverlay:Hide() end
+    if H.oomOverlay then
+      H.oomOverlay._pulse.active = false
+      pcall(function() H.oomOverlay:Hide() end)
+    end
   end
 end
 
@@ -979,10 +1084,16 @@ end
 
 -- Lock/Unlock HUD dragging based on DB
 function H.ApplyLock()
+  -- Don't apply lock/unlock during combat - defer it
+  if InCombatLockdown and InCombatLockdown() then
+    H._pendingLockUpdate = true
+    return
+  end
+  
   local locked = HardcoreHUDDB and HardcoreHUDDB.lock
   if H.root then
-    H.root:EnableMouse(not locked)
-    H.root:SetMovable(not locked)
+    pcall(function() H.root:EnableMouse(not locked) end)
+    pcall(function() H.root:SetMovable(not locked) end)
     if not locked then
       H.root:RegisterForDrag("LeftButton")
       H.root:SetScript("OnDragStart", function(self) self:StartMoving() end)
@@ -997,10 +1108,10 @@ function H.ApplyLock()
   end
   if H.bars then
     local b = H.bars
-    if b.hp then b.hp:EnableMouse(not locked) end
-    if b.pow then b.pow:EnableMouse(not locked) end
-    if b.targetHP then b.targetHP:EnableMouse(not locked) end
-    if b.targetPow then b.targetPow:EnableMouse(not locked) end
+    if b.hp then pcall(function() b.hp:EnableMouse(not locked) end) end
+    if b.pow then pcall(function() b.pow:EnableMouse(not locked) end) end
+    if b.targetHP then pcall(function() b.targetHP:EnableMouse(not locked) end) end
+    if b.targetPow then pcall(function() b.targetPow:EnableMouse(not locked) end) end
     if not locked then
       if b.hp then b.hp:RegisterForDrag("LeftButton") end
       if b.pow then b.pow:RegisterForDrag("LeftButton") end
@@ -1013,6 +1124,22 @@ function H.ApplyLock()
       if b.targetPow then b.targetPow:RegisterForDrag() end
     end
   end
+end
+
+-- Handle deferred lock updates after combat
+do
+  local lockFrame = CreateFrame("Frame")
+  lockFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+  lockFrame:SetScript("OnEvent", function()
+    if H._pendingLockUpdate then
+      H._pendingLockUpdate = nil
+      if H.ApplyLock then H.ApplyLock() end
+    end
+    -- Re-update OOM overlay now that we're out of combat
+    if H.UpdateOOMOverlay then H.UpdateOOMOverlay() end
+    -- Re-update target bars now that we're out of combat
+    if H.UpdateTarget then H.UpdateTarget() end
+  end)
 end
 
 -- Fallback: Zones window builder if Zones.lua didn't load
@@ -1078,8 +1205,7 @@ if not H.ShowZonesWindow then
     H.zonesFrame = f
     f:SetSize(300, 380)
     f:SetPoint("CENTER")
-    f:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=6,right=6,top=6,bottom=6} })
-    f:SetBackdropColor(0,0,0,0.85)
+    H.SafeBackdrop(f, { bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=16, insets={left=6,right=6,top=6,bottom=6} }, 0,0,0,0.85)
     f:Hide()
     f:EnableMouse(true)
     f:SetMovable(true)
@@ -1163,5 +1289,150 @@ if not H.ShowZonesWindow then
   function H.ShowZonesWindow()
     buildWindow()
     if H.zonesFrame:IsShown() then H.zonesFrame:Hide() else H.zonesFrame:Show() end
+  end
+end
+
+-- Target Mark Button Bar (for raid marking)
+function H.InitTargetMarkBar()
+  if H.targetMarkBar then return end
+  
+  HardcoreHUDDB.targetMarks = HardcoreHUDDB.targetMarks or { enabled = true, pos = { x = 0, y = -280 } }
+  
+  -- Main frame - sleek horizontal bar
+  local bar = CreateFrame("Frame", "HardcoreHUDTargetMarkBar", UIParent)
+  bar:SetSize(280, 42)
+  bar:SetPoint("CENTER", UIParent, "CENTER", HardcoreHUDDB.targetMarks.pos.x, HardcoreHUDDB.targetMarks.pos.y)
+  bar:SetFrameStrata("HIGH")
+  
+  -- Gradient background (dark with subtle shine)
+  local bg = bar:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints(bar)
+  bg:SetColorTexture(0.15, 0.15, 0.15, 0.9)
+  
+  -- Top highlight line
+  local topLine = bar:CreateTexture(nil, "ARTWORK")
+  topLine:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+  topLine:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
+  topLine:SetHeight(1)
+  topLine:SetColorTexture(0.3, 0.3, 0.3, 0.8)
+  
+  -- Bottom highlight line
+  local botLine = bar:CreateTexture(nil, "ARTWORK")
+  botLine:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+  botLine:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+  botLine:SetHeight(1)
+  botLine:SetColorTexture(0.1, 0.1, 0.1, 0.6)
+  
+  -- Left border
+  local leftBorder = bar:CreateTexture(nil, "ARTWORK")
+  leftBorder:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+  leftBorder:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+  leftBorder:SetWidth(1)
+  leftBorder:SetColorTexture(0.3, 0.3, 0.3, 0.8)
+  
+  -- Right border
+  local rightBorder = bar:CreateTexture(nil, "ARTWORK")
+  rightBorder:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
+  rightBorder:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+  rightBorder:SetWidth(1)
+  rightBorder:SetColorTexture(0.3, 0.3, 0.3, 0.8)
+  
+  bar:Hide()
+  H.targetMarkBar = bar
+  
+  -- Target marks: 1=Star, 2=Circle, 3=Diamond, 4=Triangle, 5=Moon, 6=Square, 7=X, 8=Skull
+  local marks = {
+    { name = "Star", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_1" },
+    { name = "Circle", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_2" },
+    { name = "Diamond", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_3" },
+    { name = "Triangle", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_4" },
+    { name = "Moon", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_5" },
+    { name = "Square", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_6" },
+    { name = "X", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_7" },
+    { name = "Skull", icon = "Interface/TargetingFrame/UI-RaidTargetingIcon_8" },
+  }
+  
+  H.targetMarkButtons = {}
+  
+  for i, mark in ipairs(marks) do
+    local btn = CreateFrame("Button", "HardcoreHUDMark"..i, bar, "SecureActionButtonTemplate")
+    btn:SetSize(32, 32)
+    btn:SetPoint("TOPLEFT", bar, "TOPLEFT", 4 + (i-1)*34, 5)
+    
+    -- Button background - transparent so icons show through
+    local btnBg = btn:CreateTexture(nil, "BACKGROUND")
+    btnBg:SetAllPoints(btn)
+    btnBg:SetColorTexture(0.05, 0.05, 0.05, 0.3)
+    btn.btnBg = btnBg
+    
+    -- Icon - colored square with mark symbol
+    local icon = btn:CreateTexture(nil, "ARTWORK")
+    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
+    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
+    icon:SetTexture(mark.icon)
+    icon:SetVertexColor(1, 1, 1, 1)
+    btn.icon = icon
+    
+    -- Button border - darker frame
+    local btnBorder = btn:CreateTexture(nil, "OVERLAY")
+    btnBorder:SetAllPoints(btn)
+    btnBorder:SetTexture("Interface/Buttons/UI-Slot-Button")
+    btnBorder:SetVertexColor(0.3, 0.3, 0.3, 0.8)
+    btn.border = btnBorder
+    
+    -- Highlight on hover
+    btn:SetScript("OnEnter", function(self)
+      btnBg:SetColorTexture(0.3, 0.3, 0.3, 0.6)
+      btnBorder:SetVertexColor(1, 0.84, 0, 1)
+      icon:SetVertexColor(1, 1, 1, 1)  -- Brighter on hover
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:SetText(mark.name, 1, 1, 1)
+      GameTooltip:Show()
+    end)
+    
+    btn:SetScript("OnLeave", function(self)
+      btnBg:SetColorTexture(0.05, 0.05, 0.05, 0.3)
+      btnBorder:SetVertexColor(0.3, 0.3, 0.3, 0.8)
+      icon:SetVertexColor(1, 1, 1, 1)  -- Back to normal
+      GameTooltip:Hide()
+    end)
+    
+    -- Set secure attribute for marking
+    btn:SetAttribute("type", "macro")
+    btn:SetAttribute("macrotext", "/tm " .. i)
+    
+    H.targetMarkButtons[i] = btn
+  end
+  
+  -- Make bar draggable
+  local function onDragStart(self)
+    if not HardcoreHUDDB.targetMarks.locked then
+      self:StartMoving()
+    end
+  end
+  
+  local function onDragStop(self)
+    self:StopMovingOrSizing()
+    local x, y = self:GetCenter()
+    local px, py = UIParent:GetCenter()
+    HardcoreHUDDB.targetMarks.pos.x = x - px
+    HardcoreHUDDB.targetMarks.pos.y = y - py
+  end
+  
+  bar:SetMovable(true)
+  bar:SetUserPlaced(false)
+  bar:SetScript("OnMouseDown", onDragStart)
+  bar:SetScript("OnMouseUp", onDragStop)
+end
+
+-- Toggle Target Mark Bar visibility
+function H.ToggleTargetMarkBar()
+  if not H.targetMarkBar then H.InitTargetMarkBar() end
+  if H.targetMarkBar:IsShown() then
+    H.targetMarkBar:Hide()
+    HardcoreHUDDB.targetMarks.enabled = false
+  else
+    H.targetMarkBar:Show()
+    HardcoreHUDDB.targetMarks.enabled = true
   end
 end

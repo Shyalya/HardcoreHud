@@ -12,6 +12,38 @@ do
   end)
 end
 
+-- Safe backdrop helper: uses native SetBackdrop if available, otherwise creates a simple bg+border textures
+function H.SafeBackdrop(frame, backdrop, r, g, b, a)
+  if not frame then return end
+  if frame.SetBackdrop then
+    pcall(function()
+      frame:SetBackdrop(backdrop)
+      if frame.SetBackdropColor and r and g and b and a then frame:SetBackdropColor(r,g,b,a) end
+    end)
+    return
+  end
+  -- fallback: create a solid background texture and a thin border
+  frame._hh_bg = frame._hh_bg or frame:CreateTexture(nil, "BACKGROUND")
+  frame._hh_bg:SetDrawLayer("BACKGROUND", -1)
+  frame._hh_bg:ClearAllPoints(); frame._hh_bg:SetPoint("TOPLEFT", frame, "TOPLEFT", -1, 1); frame._hh_bg:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 1, -1)
+  frame._hh_bg:SetTexture(backdrop and backdrop.bgFile or "Interface/Tooltips/UI-Tooltip-Background")
+  if frame._hh_bg.SetVertexColor and r and g and b and a then frame._hh_bg:SetVertexColor(r,g,b,a) else frame._hh_bg:SetAlpha(a or 0.9) end
+  -- thin border
+  if not frame._hh_border then
+    frame._hh_border = {}
+    local function mk(side)
+      local t = frame:CreateTexture(nil, "OVERLAY")
+      t:SetColorTexture(0,0,0,0.9)
+      frame._hh_border[side] = t
+    end
+    mk("top"); mk("bottom"); mk("left"); mk("right")
+    frame._hh_border.top:ClearAllPoints(); frame._hh_border.top:SetPoint("TOPLEFT", frame, "TOPLEFT", -1, 1); frame._hh_border.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 1, 1); frame._hh_border.top:SetHeight(1)
+    frame._hh_border.bottom:ClearAllPoints(); frame._hh_border.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", -1, -1); frame._hh_border.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 1, -1); frame._hh_border.bottom:SetHeight(1)
+    frame._hh_border.left:ClearAllPoints(); frame._hh_border.left:SetPoint("TOPLEFT", frame, "TOPLEFT", -1, 1); frame._hh_border.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", -1, -1); frame._hh_border.left:SetWidth(1)
+    frame._hh_border.right:ClearAllPoints(); frame._hh_border.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 1, 1); frame._hh_border.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 1, -1); frame._hh_border.right:SetWidth(1)
+  end
+end
+
 -- Unified tooltip positioning: middle-right of the screen
 function H.PositionTooltip()
   if not GameTooltip then return end
@@ -28,8 +60,24 @@ if not H.ShowUnifiedTooltip then
     if not GameTooltip then return end
     -- Anchor to unified position without changing global defaults
     H.PositionTooltip()
-    if spellID and GameTooltip.SetSpellByID then
-      GameTooltip:SetSpellByID(spellID)
+    if spellID then
+      local ok
+      if GameTooltip.SetSpellByID then
+        ok = pcall(function() GameTooltip:SetSpellByID(spellID) end)
+      else
+        -- Fallback: try to resolve name/link
+        ok = false
+        local nm = GetSpellInfo and select(1, GetSpellInfo(spellID))
+        if nm then
+          GameTooltip:ClearLines(); GameTooltip:AddLine(nm)
+          ok = true
+        end
+      end
+      if not ok then
+        -- Last-resort: plain name
+        local nm = GetSpellInfo and select(1, GetSpellInfo(spellID)) or ("Spell:"..tostring(spellID))
+        GameTooltip:ClearLines(); GameTooltip:AddLine(nm)
+      end
     end
     -- Some clients reset anchor after SetSpellByID; re-apply position
     GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
@@ -41,6 +89,42 @@ end
 
 -- Globally unify GameTooltip default anchor to prevent flicker back to cursor
 -- Do NOT override global tooltip behavior; position only when our buttons request it
+
+-- Pending secure attribute queue: if combat prevents SetAttribute, store and apply after regen
+if not H.QueueSetAttribute then
+  H._pendingAttributes = H._pendingAttributes or {}
+  function H.QueueSetAttribute(frame, key, value)
+    if not frame or not key then return end
+    if not InCombatLockdown() then
+      if frame.SetAttribute then pcall(frame.SetAttribute, frame, key, value) end
+      return
+    end
+    H._pendingAttributes[frame] = H._pendingAttributes[frame] or {}
+    H._pendingAttributes[frame][key] = value
+  end
+  function H.ApplyPendingAttributes()
+    if not H._pendingAttributes then return end
+    for frame, attrs in pairs(H._pendingAttributes) do
+      if frame and frame.SetAttribute then
+        for k, v in pairs(attrs) do
+          pcall(frame.SetAttribute, frame, k, v)
+        end
+      end
+    end
+    H._pendingAttributes = {}
+  end
+  do
+    local rf = CreateFrame("Frame")
+    rf:RegisterEvent("PLAYER_REGEN_ENABLED")
+    rf:RegisterEvent("PLAYER_LOGIN")
+    rf:RegisterEvent("PLAYER_ENTERING_WORLD")
+    rf:SetScript("OnEvent", function(_, event)
+      if event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+        H.ApplyPendingAttributes()
+      end
+    end)
+  end
+end
 
 -- Healing potion itemIDs (Wrath 3.3.5 common)
 -- Healing potion ranks (Wrath 3.3.5). Highest rank should be used on button.
@@ -54,6 +138,21 @@ local HEAL_POTION_RANKS = {
   [13446] = 6,  -- Major Healing Potion
   [22829] = 7,  -- Super Healing Potion
   [33447] = 8,  -- Runic Healing Potion
+}
+
+-- Mana potion ranks (Classic + later). Highest rank should be used on button.
+-- Explicit potency ordering instead of relying on itemID numeric value.
+local MANA_POTION_RANKS = {
+  [2455]  = 1,  -- Minor Mana Potion
+  [3385]  = 2,  -- Lesser Mana Potion
+  [3827]  = 3,  -- Mana Potion
+  [6149]  = 4,  -- Greater Mana Potion
+  [13443] = 5,  -- Superior Mana Potion
+  [13444] = 6,  -- Major Mana Potion
+  -- The following are not Classic-era but are harmless to include:
+  [22832] = 7,  -- Super Mana Potion
+  [33448] = 8,  -- Runic Mana Potion
+  [18841] = 2,  -- Combat Mana Potion (situational)
 }
 -- Ensure reminders react to aura changes and combat transitions so icons reappear when buffs expire in combat.
 if not H._reminderEvents then
@@ -69,27 +168,27 @@ if not H._reminderEvents then
     end
     if not HardcoreHUDDB or not HardcoreHUDDB.reminders or HardcoreHUDDB.reminders.enabled == false then return end
     if shouldSuppressReminders() then
-      if H.reminderFrame then H.reminderFrame:Hide() end
+      if H.reminderFrame then pcall(function() H.reminderFrame:Hide() end) end
       return
     end
     if event == "PLAYER_ENTERING_WORLD" then
       if H.InitReminders then H.InitReminders() end
       if H.UpdateReminders then H.UpdateReminders() end
-      if H.reminderFrame and HardcoreHUDDB.reminders.enabled then H.reminderFrame:Show() end
+      if H.reminderFrame and HardcoreHUDDB.reminders.enabled then pcall(function() H.reminderFrame:Show() end) end
     elseif event == "UNIT_AURA" then
       local unit = ...
       if unit == "player" then
-        if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
+        if shouldSuppressReminders() then if H.reminderFrame then pcall(function() H.reminderFrame:Hide() end) end; return end
         if H.UpdateReminders then H.UpdateReminders() end
-      end
+     end
     elseif event == "PLAYER_REGEN_DISABLED" then
       -- In combat, re-evaluate missing buffs; keep frame visible if enabled
-      if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
+      if shouldSuppressReminders() then if H.reminderFrame then pcall(function() H.reminderFrame:Hide() end) end; return end
       if H.UpdateReminders then H.UpdateReminders() end
-      if H.reminderFrame and HardcoreHUDDB.reminders.enabled then H.reminderFrame:Show() end
+      if H.reminderFrame and HardcoreHUDDB.reminders.enabled then pcall(function() H.reminderFrame:Show() end) end
     elseif event == "PLAYER_REGEN_ENABLED" then
       -- Out of combat, refresh once; visibility managed by UpdateReminders
-      if shouldSuppressReminders() then if H.reminderFrame then H.reminderFrame:Hide() end; return end
+      if shouldSuppressReminders() then if H.reminderFrame then pcall(function() H.reminderFrame:Hide() end) end; return end
       if H.UpdateReminders then H.UpdateReminders() end
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
       -- Older clients pass combat log args directly via ...
@@ -114,9 +213,9 @@ if not H._reminderEvents then
         if H.reminderFrame then
           local count = (H.reminderFrame.icons and #H.reminderFrame.icons) or 0
           if count > 0 and HardcoreHUDDB.reminders and HardcoreHUDDB.reminders.enabled and not shouldSuppressReminders() then
-            H.reminderFrame:Show()
+            pcall(function() H.reminderFrame:Show() end)
           else
-            H.reminderFrame:Hide()
+            pcall(function() H.reminderFrame:Hide() end)
           end
         end
       end
@@ -142,16 +241,77 @@ local BANDAGE_RANKS = {
   [34722] = 14, -- Heavy Frostweave Bandage
 }
 
-local function findHighestPotion()
-  local bestBag, bestSlot, bestName, bestRank, bestID = nil,nil,nil,0,nil
+-- Safe bag iterator: returns true if iteration executed, false if container APIs missing.
+local function SafeForEachBagSlot(fn)
+  if not GetContainerNumSlots or not GetContainerItemID then return false end
   for bag=0,4 do
     local slots = GetContainerNumSlots(bag) or 0
     for slot=1,slots do
-      local itemID = GetContainerItemID(bag, slot)
-      if itemID and HEAL_POTION_RANKS[itemID] then
-        local rank = HEAL_POTION_RANKS[itemID]
-        local name = GetItemInfo(itemID) or GetContainerItemLink(bag,slot) or "Healing Potion"
-        if rank > bestRank then bestRank = rank; bestBag=bag; bestSlot=slot; bestName=name; bestID=itemID end
+      fn(bag, slot)
+    end
+  end
+  return true
+end
+
+local function SafeFindInBags(fn)
+  if not GetContainerNumSlots or not GetContainerItemID then return nil end
+  for bag=0,4 do
+    local slots = GetContainerNumSlots(bag) or 0
+    for slot=1,slots do
+      local a,b = fn(bag, slot)
+      if a ~= nil then return a, b end
+    end
+  end
+  return nil
+end
+
+-- Safe GetItemCooldown wrapper for clients that lack the API
+local function GetItemCooldownSafe(itemID)
+  if not itemID then return nil, nil, nil end
+  if GetItemCooldown then
+    local s,d,e = GetItemCooldown(itemID)
+    return s,d,e
+  end
+  return nil, nil, nil
+end
+
+local function findHighestPotion()
+  local bestBag, bestSlot, bestName, bestRank, bestID = nil,nil,nil,0,nil
+  local iterOK = SafeForEachBagSlot(function(bag, slot)
+    local itemID = GetContainerItemID and GetContainerItemID(bag, slot)
+    if itemID and HEAL_POTION_RANKS[itemID] then
+      local rank = HEAL_POTION_RANKS[itemID]
+      local name = GetItemInfo(itemID) or (GetContainerItemLink and GetContainerItemLink(bag,slot)) or "Healing Potion"
+      if rank > bestRank then bestRank = rank; bestBag=bag; bestSlot=slot; bestName=name; bestID=itemID end
+    end
+  end)
+  if not iterOK then
+    -- Fallback: check known potion IDs via GetItemCount
+    for id, rank in pairs(HEAL_POTION_RANKS) do
+      local cnt = (GetItemCount and GetItemCount(id)) or 0
+      if cnt > 0 and rank > bestRank then
+        bestRank = rank; bestID = id; bestName = GetItemInfo(id) or "Healing Potion"; bestBag=nil; bestSlot=nil
+      end
+    end
+  end
+  return bestBag, bestSlot, bestName, bestID
+end
+
+local function findHighestManaPotion()
+  local bestBag, bestSlot, bestName, bestRank, bestID = nil,nil,nil,0,nil
+  local iterOK = SafeForEachBagSlot(function(bag, slot)
+    local itemID = GetContainerItemID and GetContainerItemID(bag, slot)
+    if itemID and MANA_POTION_RANKS[itemID] then
+      local rank = MANA_POTION_RANKS[itemID]
+      local name = GetItemInfo(itemID) or (GetContainerItemLink and GetContainerItemLink(bag,slot)) or "Mana Potion"
+      if rank > bestRank then bestRank = rank; bestBag=bag; bestSlot=slot; bestName=name; bestID=itemID end
+    end
+  end)
+  if not iterOK then
+    for id, rank in pairs(MANA_POTION_RANKS) do
+      local cnt = (GetItemCount and GetItemCount(id)) or 0
+      if cnt > 0 and rank > bestRank then
+        bestRank = rank; bestID = id; bestName = GetItemInfo(id) or "Mana Potion"; bestBag=nil; bestSlot=nil
       end
     end
   end
@@ -160,17 +320,22 @@ end
 
 local function findHighestBandage()
   local bestName, bestID, bestRank
-  for bag=0,4 do
-    local slots = GetContainerNumSlots(bag) or 0
-    for slot=1,slots do
-      local itemID = GetContainerItemID(bag, slot)
-      if itemID and BANDAGE_RANKS[itemID] then
-        local rank = BANDAGE_RANKS[itemID]
-        if not bestRank or rank > bestRank then
-          bestRank = rank
-          bestID = itemID
-          bestName = GetItemInfo(itemID) or GetContainerItemLink(bag,slot) or "Bandage"
-        end
+  local iterOK = SafeForEachBagSlot(function(bag, slot)
+    local itemID = GetContainerItemID and GetContainerItemID(bag, slot)
+    if itemID and BANDAGE_RANKS[itemID] then
+      local rank = BANDAGE_RANKS[itemID]
+      if not bestRank or rank > bestRank then
+        bestRank = rank
+        bestID = itemID
+        bestName = GetItemInfo(itemID) or (GetContainerItemLink and GetContainerItemLink(bag,slot)) or "Bandage"
+      end
+    end
+  end)
+  if not iterOK then
+    for id, rank in pairs(BANDAGE_RANKS) do
+      local cnt = (GetItemCount and GetItemCount(id)) or 0
+      if cnt > 0 and (not bestRank or rank > bestRank) then
+        bestRank = rank; bestID = id; bestName = GetItemInfo(id) or "Bandage"
       end
     end
   end
@@ -181,25 +346,28 @@ end
 local function AttachSpellTooltip(btn, spellID)
   btn.spellID = spellID
   btn:EnableMouse(true)
-  btn:SetFrameStrata("HIGH")
   btn:RegisterForClicks("AnyUp")
-  btn:SetFrameLevel((btn:GetParent() and btn:GetParent():GetFrameLevel() or 10) + 5)
-
-  local function FindSpellBookIndex(id)
-    local i = 1
-    while true do
-      local link = GetSpellLink(i, "spell")
-      if not link then break end
-      local found = link:match("spell:(%d+)")
-      if found and tonumber(found) == id then return i end
-      i = i + 1
-      if i > 300 then break end
-    end
-    return nil
-  end
 
   btn:SetScript("OnEnter", function(self)
-    if H.ShowUnifiedTooltip then H.ShowUnifiedTooltip(self, self.spellID) end
+    if not GameTooltip then return end
+    GameTooltip:ClearAllPoints()
+    GameTooltip:SetPoint("TOPRIGHT", btn, "TOPLEFT", -10, 5)
+    
+    -- Try to show the spell tooltip
+    if spellID then
+      if GameTooltip.SetSpellByID then
+        pcall(function() GameTooltip:SetSpellByID(spellID) end)
+      elseif GameTooltip.SetSpell then
+        pcall(function() GameTooltip:SetSpell(spellID) end)
+      else
+        -- Fallback: try to get spell name and show it
+        local spellName = GetSpellInfo(spellID)
+        if spellName then
+          pcall(function() GameTooltip:SetText(spellName) end)
+        end
+      end
+    end
+    GameTooltip:Show()
   end)
   btn:SetScript("OnLeave", function()
     if GameTooltip and GameTooltip:IsVisible() then GameTooltip:Hide() end
@@ -213,57 +381,72 @@ local function AttachItemTooltip(btn)
   btn:SetScript("OnEnter", function(self)
     if not GameTooltip then return end
     H.PositionTooltip()
-local id = self.itemID
-local itm = self.GetAttribute and self:GetAttribute("item") or nil
+    local id = self.itemID
+    local itm = self.GetAttribute and self:GetAttribute("item") or nil
 
-if id then
-  if GameTooltip.SetItemByID then
-    GameTooltip:SetItemByID(id)
-  elseif GameTooltip.SetHyperlink then
-    GameTooltip:SetHyperlink("item:"..tostring(id))
-  end
-elseif itm then
-  local linkStr
-  if type(itm) == "string" then
-    local idMatch = itm:match("item:%d+")
-    if idMatch then
-      linkStr = idMatch
-    else
-      local nameLink = select(2, GetItemInfo(itm))
-      if nameLink then linkStr = nameLink end
+    if id then
+      if GameTooltip.SetItemByID then
+        pcall(function() GameTooltip:SetItemByID(id) end)
+      elseif GameTooltip.SetHyperlink then
+        pcall(function() GameTooltip:SetHyperlink("item:"..tostring(id)) end)
+      else
+        local name = GetItemInfo and GetItemInfo(id)
+        if name then GameTooltip:ClearLines(); GameTooltip:AddLine(name) end
+      end
+    elseif itm then
+      local linkStr
+      if type(itm) == "string" then
+        local idMatch = itm:match("item:%d+")
+        if idMatch then
+          linkStr = idMatch
+        else
+          local nameLink = select(2, GetItemInfo(itm))
+          if nameLink then linkStr = nameLink end
+        end
+      end
+      if not linkStr and self.itemID then
+        linkStr = "item:"..tostring(self.itemID)
+      end
+      if linkStr and GameTooltip.SetHyperlink then
+        pcall(function() GameTooltip:SetHyperlink(linkStr) end)
+      elseif type(itm) == "string" then
+        GameTooltip:SetText(itm)
+      end
     end
-  end
-  if not linkStr and self.itemID then
-    linkStr = "item:"..tostring(self.itemID)
-  end
-  if linkStr and GameTooltip.SetHyperlink then
-    GameTooltip:SetHyperlink(linkStr)
-  elseif type(itm) == "string" then
-    GameTooltip:SetText(itm)
-  end
-end
-GameTooltip:Show()
+    -- Position tooltip reliably to the right and a bit above
+    GameTooltip:ClearAllPoints()
+    GameTooltip:SetPoint("TOPRIGHT", btn, "TOPLEFT", -10, 5)
+    GameTooltip:Show()
   end)
   btn:SetScript("OnLeave", function() if GameTooltip and GameTooltip:IsVisible() then GameTooltip:Hide() end end)
 end
 
 function H.BuildUtilities()
+  -- If already built, just rebuild sizes (don't create duplicates)
+  if H._utilitiesBuilt then
+    H.RebuildUtilityButtons()
+    return
+  end
+  H._utilitiesBuilt = true
+  
   -- Potion count and click-to-use
   local p = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.potionBtn = p
   -- Place utilities below the combo bar, above the cooldown bar
   if H.bars and H.bars.combo then
     p:ClearAllPoints()
-    p:SetPoint("TOP", H.bars.combo, "BOTTOM", -20, -8)
+    p:SetPoint("TOP", H.bars.combo, "BOTTOM", -24, -8)
   elseif H.bars and H.bars.pow then
     p:ClearAllPoints()
-    p:SetPoint("TOP", H.bars.pow, "BOTTOM", -20, -8)
+    p:SetPoint("TOP", H.bars.pow, "BOTTOM", -24, -8)
   else
     p:ClearAllPoints()
-    p:SetPoint("CENTER", UIParent, "CENTER", -20, -40)
+    p:SetPoint("CENTER", UIParent, "CENTER", -36, -40)
   end
   p:SetSize(28,28)
-  if p.SetFrameStrata then p:SetFrameStrata("HIGH") end
+  if p.SetFrameStrata then p:SetFrameStrata("MEDIUM") end
+  p:SetFrameLevel(100) -- Ensure it's on top
+  if p.SetClampedToScreen then p:SetClampedToScreen(true) end
   local ptex = p:CreateTexture(nil, "ARTWORK")
   ptex:SetAllPoints(p)
   -- Use a healing potion-looking icon for the button default
@@ -293,23 +476,24 @@ function H.BuildUtilities()
   p.cdText = pText
   p:SetAttribute("type", "item")
   AttachItemTooltip(p)
-  -- Ensure the healing potion button is visible immediately
+  -- Show potion button immediately
   p:Show()
+  
+  -- CRITICAL: Override Hide() to keep button always visible
+  local originalHideP = p.Hide
+  p.Hide = function(self) end  -- Do nothing
+  p._OriginalHide = originalHideP
 
   -- Mana potion button (separate from healing potion)
   local mp = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.manaBtn = mp
-  -- Optimal placement: to the right edge below the power bar
+  -- Initial temp position - will be repositioned by RebuildUtilityButtons
   mp:ClearAllPoints()
-  if H.bars and H.bars.pow then
-    mp:SetPoint("TOPLEFT", H.bars.pow, "BOTTOMRIGHT", 8, -8)
-  elseif H.bars and H.bars.combo then
-    mp:SetPoint("TOPLEFT", H.bars.combo, "BOTTOMRIGHT", 8, -8)
-  else
-    mp:SetPoint("CENTER", UIParent, "CENTER", 80, -40)
-  end
+  mp:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
   mp:SetSize(28,28)
-  if mp.SetFrameStrata then mp:SetFrameStrata("HIGH") end
+  if mp.SetFrameStrata then mp:SetFrameStrata("MEDIUM") end
+  mp:SetFrameLevel(100) -- Ensure it's on top
+  if mp.SetClampedToScreen then mp:SetClampedToScreen(true) end
   mp:EnableMouse(true)
   mp:RegisterForClicks("AnyUp")
   local mptex = mp:CreateTexture(nil, "ARTWORK")
@@ -325,6 +509,9 @@ function H.BuildUtilities()
   mpCd:SetAllPoints(mp)
   mpCd:Hide()
   mp.cooldown = mpCd
+  local mpCnt = mp:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  mpCnt:SetPoint("BOTTOMRIGHT", mp, "BOTTOMRIGHT")
+  mp.countText = mpCnt
   local mpText = mp:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   mpText:SetPoint("CENTER", mp, "CENTER", 0, 0)
   if STANDARD_TEXT_FONT then mpText:SetFont(STANDARD_TEXT_FONT, 14, "OUTLINE") end
@@ -333,46 +520,76 @@ function H.BuildUtilities()
   mp.cdText = mpText
   mp:SetAttribute("type", "item")
   AttachItemTooltip(mp)
-  -- Hide mana button for non-mana classes (e.g., Rogue energy, Warrior rage)
+  -- Always show mana button immediately
+  mp:Show()
+  
+  -- CRITICAL: Override Hide() to prevent any code from hiding this button
+  local originalHide = mp.Hide
+  mp.Hide = function(self)
+    -- Do nothing - mana button must always stay visible
+  end
+  mp._OriginalHide = originalHide  -- Keep reference in case we need it
+  
+  -- Show/hide mana button.
+  -- On official Classic this should be true for mana classes (e.g. Mage),
+  -- but we also fall back to checking actual mana max to avoid timing issues
+  -- where APIs briefly report 0 during login/loading.
+  local manaClasses = { MAGE=true, PRIEST=true, WARLOCK=true, DRUID=true, PALADIN=true, SHAMAN=true }
+  local function ShouldShowManaButton()
+    local _, class = UnitClass("player")
+    if class and manaClasses[class] then return true end
+    local maxMana = UnitPowerMax and UnitPowerMax("player", 0) or 0
+    return (maxMana and maxMana > 0) or false
+  end
+  H.ShouldShowManaButton = ShouldShowManaButton
+
   local function UpdateManaButtonVisibility()
-    local pType = UnitPowerType and UnitPowerType("player") or nil
-    local maxPow = UnitPowerMax and UnitPowerMax("player", 0) or nil
-    local isMana = (pType == 0) and (maxPow and maxPow > 0)
-    if isMana then
-      mp:Show()
-    else
-      mp:Hide()
+    -- Always show mana button (will be grayed out if no potions)
+    mp:Show()
+    -- Rebuild layout to ensure proper positioning
+    if H.RebuildUtilityButtons then
+      pcall(function() H.RebuildUtilityButtons() end)
     end
   end
-  mp:Hide()
+  UpdateManaButtonVisibility()
   local mpEvents = CreateFrame("Frame")
   mpEvents:RegisterEvent("PLAYER_LOGIN")
   mpEvents:RegisterEvent("UNIT_DISPLAYPOWER")
+  mpEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+  mpEvents:RegisterEvent("UNIT_MAXPOWER")
   mpEvents:SetScript("OnEvent", function(_, evt, unit)
-    if evt == "UNIT_DISPLAYPOWER" and unit ~= "player" then return end
+    if (evt == "UNIT_DISPLAYPOWER" or evt == "UNIT_MAXPOWER") and unit ~= "player" then return end
     UpdateManaButtonVisibility()
   end)
+
+  -- Extra retries: Classic can report power/class late during initial load.
+  if C_Timer and C_Timer.After then
+    C_Timer.After(0.5, UpdateManaButtonVisibility)
+    C_Timer.After(2.0, UpdateManaButtonVisibility)
+  end
   
-  -- Bandage button (self-use via macro)
+  -- Bandage button (only show if First Aid is learned)
   local bdg = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.bandageBtn = bdg
   if H.bars and H.bars.combo then
     bdg:ClearAllPoints()
-    bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -52, -8)
+    bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -60, -8)
   elseif H.bars and H.bars.pow then
     bdg:ClearAllPoints()
-    bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -52, -8)
+    bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -60, -8)
   else
     bdg:ClearAllPoints()
     bdg:SetPoint("CENTER", UIParent, "CENTER", -72, -40)
   end
   bdg:SetSize(28,28)
-  if bdg.SetFrameStrata then bdg:SetFrameStrata("HIGH") end
+  if bdg.SetFrameStrata then bdg:SetFrameStrata("MEDIUM") end
+  if bdg.SetClampedToScreen then bdg:SetClampedToScreen(true) end
   local btex = bdg:CreateTexture(nil, "ARTWORK")
   btex:SetAllPoints(bdg)
   btex:SetTexture("Interface/Icons/INV_Misc_Bandage_Frostweave_Heavy")
   bdg.icon = btex
   local bDim = bdg:CreateTexture(nil, "OVERLAY")
+  bDim:SetAllPoints(bdg)
   bDim:SetColorTexture(0,0,0,0.55)
   bDim:Hide()
   bdg.dim = bDim
@@ -389,23 +606,45 @@ function H.BuildUtilities()
   bText:SetShadowOffset(1,-1)
   bdg.cdText = bText
   bdg:SetAttribute("type", "macro")
-  -- Ensure the bandage button is visible immediately
-  bdg:Show()
+  
+  -- Check if player has First Aid profession
+  local function HasFirstAid()
+    if not GetSkillLineInfo then return false end
+    local i = 1
+    while true do
+      local skillName, _, _, skillRank, _ = GetSkillLineInfo(i)
+      if not skillName then break end
+      if skillName == "First Aid" then return skillRank and skillRank > 0 end
+      i = i + 1
+    end
+    return false
+  end
+  
+  bdg._hasFirstAid = HasFirstAid()
+  
+  -- Show/hide bandage button based on First Aid profession
+  if bdg._hasFirstAid then
+    bdg:Show()
+  else
+    bdg:Hide()
+  end
+  
   -- Hearthstone
   local hs = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.hearthBtn = hs
   if H.bars and H.bars.combo then
     hs:ClearAllPoints()
-    hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 20, -8)
+    hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 12, -8)
   elseif H.bars and H.bars.pow then
     hs:ClearAllPoints()
-    hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 20, -8)
+    hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 12, -8)
   else
     hs:ClearAllPoints()
     hs:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
   end
   hs:SetSize(28,28)
-  if hs.SetFrameStrata then hs:SetFrameStrata("HIGH") end
+  if hs.SetFrameStrata then hs:SetFrameStrata("MEDIUM") end
+  if hs.SetClampedToScreen then hs:SetClampedToScreen(true) end
   local hst = hs:CreateTexture(nil, "ARTWORK")
   hst:SetAllPoints(hs)
   hst:SetTexture("Interface/Icons/INV_Misc_Rune_01")
@@ -431,41 +670,57 @@ function H.BuildUtilities()
   AttachItemTooltip(hs)
   -- Ensure the hearthstone button is visible immediately
   hs:Show()
+  
+  -- CRITICAL: Override Hide() to keep button always visible
+  local originalHideHs = hs.Hide
+  hs.Hide = function(self) end  -- Do nothing
+  hs._OriginalHide = originalHideHs
 
   -- update counts
   local updater = CreateFrame("Frame")
   updater:RegisterEvent("BAG_UPDATE")
   updater:RegisterEvent("PLAYER_LOGIN")
+  updater:RegisterEvent("SPELLS_CHANGED")
   updater:SetScript("OnEvent", function()
+    -- Update First Aid status on every SPELLS_CHANGED event
+    bdg._hasFirstAid = HasFirstAid()
+    
     local bag, slot, name, itemID = findHighestPotion()
-    if name then
-      p:SetAttribute("item", name)
+    if itemID then
+      H.QueueSetAttribute(p, "item", "item:"..tostring(itemID))
       p.itemID = itemID
       local tex = select(10, GetItemInfo(itemID))
       if tex and p.icon then p.icon:SetTexture(tex) end
       if p.icon and p.icon.SetDesaturated then p.icon:SetDesaturated(false) end
       if p.dim then p.dim:Hide() end
+      p:Show()
     else
       -- No healing potion found: show default icon dimmed
+      H.QueueSetAttribute(p, "item", "")
+      p.itemID = nil
       if p.icon then p.icon:SetTexture("Interface/Icons/INV_Potion_54") end
       if p.icon and p.icon.SetDesaturated then p.icon:SetDesaturated(true) end
       if p.dim then p.dim:Show() end
+      p:Show()
     end
     local total = 0
-    for bag=0,4 do
-      local slots = GetContainerNumSlots(bag) or 0
-      for slot=1,slots do
-        local id = GetContainerItemID(bag,slot)
-        if id and HEAL_POTION_RANKS[id] then
-          local _,count = GetContainerItemInfo(bag,slot)
-          total = total + (count or 1)
-        end
+    local iterOK = SafeForEachBagSlot(function(bag, slot)
+      local id = GetContainerItemID and GetContainerItemID(bag,slot)
+      if id and HEAL_POTION_RANKS[id] then
+        local _,count = GetContainerItemInfo and GetContainerItemInfo(bag,slot)
+        total = total + (count or 1)
+      end
+    end)
+    if not iterOK then
+      for id,_ in pairs(HEAL_POTION_RANKS) do
+        total = total + ((GetItemCount and GetItemCount(id)) or 0)
       end
     end
     cnt:SetText(total)
+    
     -- Bandage update
     local bname, bid = findHighestBandage()
-    if bname and bid then
+    if bname and bid and bdg._hasFirstAid then
       bdg.itemID = bid
       local useMacro
       -- Prefer ID-based macro to avoid locale/cache issues
@@ -479,49 +734,119 @@ function H.BuildUtilities()
         end
         useMacro = "/use [@player] "..cleanName
       end
-      bdg:SetAttribute("macrotext", useMacro)
+      H.QueueSetAttribute(bdg, "macrotext", useMacro)
       -- update icon to match the best bandage if info available
       local tex = select(10, GetItemInfo(bid))
       if tex and bdg.icon then bdg.icon:SetTexture(tex) end
+      if bdg.icon and bdg.icon.SetDesaturated then bdg.icon:SetDesaturated(false) end
+      if bdg.dim then bdg.dim:Hide() end
       local btotal = 0
-      for bag=0,4 do
-        local slots = GetContainerNumSlots(bag) or 0
-        for slot=1,slots do
-          local id = GetContainerItemID(bag,slot)
-          if id == bid then
-            local _,count = GetContainerItemInfo(bag,slot)
-            btotal = btotal + (count or 1)
-          elseif id and BANDAGE_RANKS[id] and (BANDAGE_RANKS[id] < BANDAGE_RANKS[bid]) then
-            local _,count = GetContainerItemInfo(bag,slot)
-            btotal = btotal + (count or 1)
-          end
+      local iterOK2 = SafeForEachBagSlot(function(bag, slot)
+        local id = GetContainerItemID and GetContainerItemID(bag,slot)
+        if id == bid then
+          local _,count = GetContainerItemInfo and GetContainerItemInfo(bag,slot)
+          btotal = btotal + (count or 1)
+        elseif id and BANDAGE_RANKS[id] and (BANDAGE_RANKS[id] < BANDAGE_RANKS[bid]) then
+          local _,count = GetContainerItemInfo and GetContainerItemInfo(bag,slot)
+          btotal = btotal + (count or 1)
+        end
+      end)
+      if not iterOK2 then
+        btotal = (GetItemCount and GetItemCount(bid)) or 0
+        for id, rank in pairs(BANDAGE_RANKS) do
+          if rank < (BANDAGE_RANKS[bid] or 0) then btotal = btotal + ((GetItemCount and GetItemCount(id)) or 0) end
         end
       end
       if bdg.countText then bdg.countText:SetText(btotal) end
       bdg:Show()
     else
-      -- Always show bandage button even when none are in bags
-      bdg.itemID = nil
-      bdg:SetAttribute("macrotext", "")
-      if bdg.countText then bdg.countText:SetText(0) end
-      -- Set a generic bandage icon and desaturate to indicate none available
-      local tex = "Interface/Icons/INV_Misc_Bandage_Frostweave_Heavy"
-      if bdg.icon then bdg.icon:SetTexture(tex) end
-      if bdg.icon and bdg.icon.SetDesaturated then bdg.icon:SetDesaturated(true) end
-      if bdg.dim then bdg.dim:Show() end
-      bdg:Show()
+      -- Hide bandage button if First Aid is not learned
+      if not bdg._hasFirstAid then
+        bdg:Hide()
+      else
+        -- Show bandage button with empty/dimmed state when no bandages are in bags
+        bdg.itemID = nil
+        H.QueueSetAttribute(bdg, "macrotext", "")
+        if bdg.countText then bdg.countText:SetText(0) end
+        -- Set a generic bandage icon and desaturate to indicate none available
+        local tex = "Interface/Icons/INV_Misc_Bandage_Frostweave_Heavy"
+        if bdg.icon then bdg.icon:SetTexture(tex) end
+        if bdg.icon and bdg.icon.SetDesaturated then bdg.icon:SetDesaturated(true) end
+        if bdg.dim then bdg.dim:Show() end
+        bdg:Show()
+      end
     end
-    -- Update mana button tooltip/icon if a mana potion exists and is set elsewhere
-    if H.manaBtn and H.manaBtn.itemID then
-      local mtex = select(10, GetItemInfo(H.manaBtn.itemID))
-      if mtex and H.manaBtn.icon then H.manaBtn.icon:SetTexture(mtex) end
+    -- Mana potion update (scan + bind + dim when empty) - always show like HP potion
+    if H.manaBtn then
+      local _, _, _, mid = findHighestManaPotion()
+      if mid then
+        H.QueueSetAttribute(H.manaBtn, "item", "item:"..tostring(mid))
+        H.manaBtn.itemID = mid
+        local mtex = select(10, GetItemInfo(mid))
+        if mtex and H.manaBtn.icon then H.manaBtn.icon:SetTexture(mtex) end
+        if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(false) end
+        if H.manaBtn.dim then H.manaBtn.dim:Hide() end
+        H.manaBtn:Show()
+      else
+        -- No mana potion found: show default icon dimmed
+        H.QueueSetAttribute(H.manaBtn, "item", "")
+        H.manaBtn.itemID = nil
+        if H.manaBtn.icon then H.manaBtn.icon:SetTexture("Interface/Icons/INV_Potion_76") end
+        if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(true) end
+        if H.manaBtn.dim then H.manaBtn.dim:Show() end
+        H.manaBtn:Show()
+      end
+
+      local mtotal = 0
+      -- Try bag-based iteration first
+      if SafeForEachBagSlot then
+        SafeForEachBagSlot(function(bag, slot)
+          local id = GetContainerItemID and GetContainerItemID(bag,slot)
+          if id and MANA_POTION_RANKS[id] then
+            local _,count = GetContainerItemInfo and GetContainerItemInfo(bag,slot)
+            mtotal = mtotal + (count or 1)
+          end
+        end)
+      end
+      -- If bag iteration found nothing, try GetItemCount fallback
+      if mtotal == 0 then
+        for id,_ in pairs(MANA_POTION_RANKS) do
+          mtotal = mtotal + ((GetItemCount and GetItemCount(id)) or 0)
+        end
+      end
+      if H.manaBtn.countText then H.manaBtn.countText:SetText(mtotal) end
     end
     if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.potions then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Potion count="..total)
     end
+    -- Ensure hearthstone and bandage buttons are always shown
+    if H.hearthBtn then
+      pcall(function() H.hearthBtn:Show() end)
+    end
+    if H.bandageBtn and H.bandageBtn._hasFirstAid then
+      pcall(function() H.bandageBtn:Show() end)
+    end
+    -- Ensure racial button is shown if it exists
+    if H.racialBtn then
+      pcall(function() H.racialBtn:Show() end)
+    end
+    -- Trigger layout rebuild immediately after visibility changes
+    if H.RebuildUtilityButtons then 
+      pcall(function() H.RebuildUtilityButtons() end)
+    end
+    -- Force mana button to stay visible
+    if H.manaBtn then
+      pcall(function() H.manaBtn:Show() end)
+    end
   end)
-  -- Delayed first update (item info cache)
-  C_Timer.After(2, function() if updater:GetScript("OnEvent") then updater:GetScript("OnEvent")() end end)
+  -- Call updater immediately and again after delayed to ensure buttons are shown
+  if updater:GetScript("OnEvent") then updater:GetScript("OnEvent")() end
+  C_Timer.After(2, function() 
+    if updater:GetScript("OnEvent") then 
+      updater:GetScript("OnEvent")() 
+      if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+    end 
+  end)
 
   -- Utility row container spanning potion and hearth buttons
   local row = CreateFrame("Frame", nil, UIParent)
@@ -529,13 +854,20 @@ function H.BuildUtilities()
   row:SetSize((p:GetWidth() + hs:GetWidth() + bdg:GetWidth() + 12), math.max(p:GetHeight(), hs:GetHeight()))
   row:ClearAllPoints()
   row:SetPoint("TOPLEFT", p, "TOPLEFT", 0, 0)
+  row:Hide() -- Hide container frame so it doesn't block clicks on utility buttons
 
   -- Class cooldown buttons (only if spell learned)
+  -- Guard against creating duplicates - check if already exists
+  if H._classCDBuilt then
+    return
+  end
+  H._classCDBuilt = true
+  
   local class = select(2, UnitClass("player"))
   local cdsByClass = {
     WARRIOR = {871,12975,1719,2565}, -- Shield Wall, Last Stand, Recklessness, Shield Block
     ROGUE = {1856,5277,31224,2983}, -- Vanish, Evasion, Cloak of Shadows, Sprint
-    MAGE = {45438,66,1953}, -- Ice Block, Invisibility, Blink
+    MAGE = {45438,66,1953,122}, -- Ice Block, Invisibility, Blink, Frost Nova
     DRUID = {22812,61336,22842}, -- Barkskin, Survival Instincts, Frenzied Regeneration
     PALADIN = {642,498,633,1022,31884,853}, -- Divine Shield, Divine Protection, Lay on Hands, Hand of Protection, Avenging Wrath, Hammer of Justice
     HUNTER = {5384,19263,781}, -- Feign Death, Deterrence, Disengage
@@ -545,9 +877,9 @@ function H.BuildUtilities()
   }
   local spellList = cdsByClass[class] or {}
   local buttons = {}
-  -- Place class cooldowns near the utility row at the bottom
+  -- Place class cooldowns as a separate row below the utility row
   local anchorParent = H.utilRow or (H.bars and (H.bars.pow or H.bars.combo)) or UIParent
-  local anchorY = -8
+  local anchorY = -10  -- Reduced gap from -36 to -10
   local startX = -((#spellList * 30) / 2) + 15
   local function IsKnown(id)
     -- Direct APIs first
@@ -561,7 +893,7 @@ function H.BuildUtilities()
       while true do
         local name = GetSpellBookItemName and GetSpellBookItemName(i, BOOKTYPE_SPELL) or nil
         if not name then break end
-        local link = GetSpellLink(i, BOOKTYPE_SPELL)
+        local link = GetSpellLink and GetSpellLink(i, BOOKTYPE_SPELL) or nil
         if link then
           local found = link:match("spell:(%d+)")
           if found and tonumber(found) == id then return true end
@@ -594,11 +926,12 @@ function H.BuildUtilities()
         b:SetSize(28,28)
         -- Position using sequential index of added buttons to avoid gaps/overlaps
         added = added + 1
+        b:ClearAllPoints();
         b:SetPoint("TOP", anchorParent, "BOTTOM", startX + (added-1)*32, anchorY)
         b:SetAttribute("type", "spell")
         b:SetAttribute("spell", name)
-        b:SetFrameStrata("HIGH")
-        b:SetFrameLevel(70 + added)
+        b:SetFrameStrata("MEDIUM")
+        b:SetFrameLevel(50 + added)
         b:SetHitRectInsets(0,0,0,0)
         local it = b:CreateTexture(nil, "ARTWORK")
         it:SetAllPoints(b)
@@ -624,59 +957,280 @@ function H.BuildUtilities()
         cdText:SetShadowOffset(1,-1)
         b.cdText = cdText
         AttachSpellTooltip(b, spellID)
+        b.spellID = spellID
+        
+        -- CRITICAL: Override Hide() to keep class cooldown buttons always visible
+        local originalHideCooldown = b.Hide
+        b.Hide = function(self) end  -- Do nothing
+        b._OriginalHide = originalHideCooldown
+        
+        b:Show()
         buttons[#buttons+1] = b
       end
     end
   end
-  -- Add racial cooldown button (e.g., Will of the Forsaken for Undead)
-  local function AddRacial()
+  -- Add racial cooldown as a utility-row button (Escape Artist, WotF, etc.)
+  local function AddRacialUtility()
+    if InCombatLockdown and InCombatLockdown() then
+      H._pendingRacialBuild = true
+      return
+    end
+
     local race = select(2, UnitRace("player"))
     local racialSpellID
+    -- Classic active racials
+    if race == "Human" then racialSpellID = 20600 end -- Perception
+    if race == "Dwarf" then racialSpellID = 20594 end -- Stoneform
+    if race == "NightElf" then racialSpellID = 20580 end -- Shadowmeld
+    if race == "Gnome" then racialSpellID = 20589 end -- Escape Artist
+    if race == "Orc" then racialSpellID = 20572 end -- Blood Fury
+    if race == "Tauren" then racialSpellID = 20549 end -- War Stomp
+    if race == "Troll" then racialSpellID = 20554 end -- Berserking
     if race == "Scourge" or race == "Undead" then racialSpellID = 7744 end -- Will of the Forsaken
-    -- Add more as needed
-    if racialSpellID and IsKnown(racialSpellID) then
-      local name, _, icon = GetSpellInfo(racialSpellID)
-      if name then
-        local b = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
-        b:SetSize(28,28)
-        -- place after existing buttons
-        local idx = #buttons + 1
-        b:SetPoint("TOP", anchorParent, "BOTTOM", startX + (idx-1)*32, anchorY)
-        b:SetAttribute("type", "spell")
-        b:SetAttribute("spell", name)
-        b:SetFrameStrata("HIGH")
-        b:SetFrameLevel(70 + idx)
-        local it = b:CreateTexture(nil, "ARTWORK")
-        it:SetAllPoints(b)
-        it:SetTexture(icon)
-        b.icon = it
-        local dim = b:CreateTexture(nil, "OVERLAY")
-        dim:SetAllPoints(b)
-        dim:SetColorTexture(0,0,0,0.55)
-        dim:Hide()
-        b.dim = dim
-        local cd = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
-        cd:SetAllPoints(b); cd:Hide(); b.cooldown = cd
-        local cdText = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        cdText:SetPoint("CENTER", b, "CENTER", 0, 0)
-        if STANDARD_TEXT_FONT then cdText:SetFont(STANDARD_TEXT_FONT, 14, "OUTLINE") end
-        cdText:SetShadowColor(0,0,0,1); cdText:SetShadowOffset(1,-1)
-        b.cdText = cdText
-        b.spellID = racialSpellID
-        AttachSpellTooltip(b, racialSpellID)
-        buttons[#buttons+1] = b
-      end
+
+    -- TBC+ (safe to include; only shows if known)
+    if not racialSpellID and race == "BloodElf" then racialSpellID = 28730 end -- Arcane Torrent
+    if not racialSpellID and race == "Draenei" then racialSpellID = 28880 end -- Gift of the Naaru
+    if not racialSpellID then return end
+
+    -- Create the button even if spells are not fully loaded yet. We'll bind the
+    -- secure spell attribute as soon as GetSpellInfo returns a name.
+    local name, _, icon = (GetSpellInfo and GetSpellInfo(racialSpellID))
+    if not icon and GetSpellTexture then icon = GetSpellTexture(racialSpellID) end
+    if not icon or icon == "" then icon = "Interface/Icons/INV_Misc_QuestionMark" end
+
+    local b = H.racialBtn
+    if not (b and b.SetAttribute) then
+      b = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
+      b:SetSize(28,28)
+      if b.SetClampedToScreen then b:SetClampedToScreen(true) end
+      b:SetFrameStrata("MEDIUM")
+      b:SetFrameLevel(100)
+      local it = b:CreateTexture(nil, "ARTWORK")
+      it:SetAllPoints(b)
+      b.icon = it
+      local dim = b:CreateTexture(nil, "OVERLAY")
+      dim:SetAllPoints(b)
+      dim:SetColorTexture(0,0,0,0.55)
+      dim:Hide()
+      b.dim = dim
+      local cd = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
+      cd:SetAllPoints(b); cd:Hide(); b.cooldown = cd
+      local cdText = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      cdText:SetPoint("CENTER", b, "CENTER", 0, 0)
+      if STANDARD_TEXT_FONT then cdText:SetFont(STANDARD_TEXT_FONT, 14, "OUTLINE") end
+      cdText:SetShadowColor(0,0,0,1); cdText:SetShadowOffset(1,-1)
+      b.cdText = cdText
+      H.racialBtn = b
+      
+      -- Show racial button immediately
+      b:Show()
+      
+      -- CRITICAL: Override Hide() to keep button always visible
+      local originalHideRacial = b.Hide
+      b.Hide = function(self) end  -- Do nothing
+      b._OriginalHide = originalHideRacial
     end
+
+    b.spellID = racialSpellID
+    if b.icon then b.icon:SetTexture(icon) end
+    if b.icon and b.icon.SetDesaturated then b.icon:SetDesaturated(false) end
+    if b.dim then b.dim:Hide() end
+
+    -- Bind click-cast once we can resolve the localized name.
+    if name and name ~= "" then
+      H.QueueSetAttribute(b, "type", "spell")
+      H.QueueSetAttribute(b, "spell", name)
+      AttachSpellTooltip(b, racialSpellID)
+      -- Explicitly ensure OnEnter is set in case AttachSpellTooltip failed or was overridden
+      b:SetScript("OnEnter", function(self) 
+        if GameTooltip and GameTooltip.SetOwner then
+          H.PositionTooltip()
+          if GameTooltip.SetSpellByID then 
+             pcall(function() GameTooltip:SetSpellByID(racialSpellID) end)
+          else
+             GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+             H.PositionTooltip()
+             GameTooltip:AddLine(name)
+             GameTooltip:Show()
+          end
+          GameTooltip:Show()
+        end
+      end)
+      b:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
+    else
+      -- Not ready yet; keep shown but not clickable until next retry.
+      H._pendingRacialBuild = true
+    end
+
+    -- Place it to the RIGHT of mana pot if present (otherwise to the right of hearth).
+    local rightAnchor = (H.manaBtn and H.manaBtn.IsShown and H.manaBtn:IsShown() and H.manaBtn) or H.hearthBtn
+    if rightAnchor then
+      b:ClearAllPoints(); b:SetPoint("LEFT", rightAnchor, "RIGHT", 8, 0)
+    elseif H.potionBtn then
+      b:ClearAllPoints(); b:SetPoint("LEFT", H.potionBtn, "RIGHT", 8, 0)
+    else
+      b:ClearAllPoints(); b:SetPoint("CENTER", UIParent, "CENTER", 120, -40)
+    end
+    b:Show()
+
+    -- If the chosen anchor pushes the button off-screen (small resolutions / UI scale),
+    -- fall back to a safe position.
+    local px = (UIParent and UIParent.GetWidth and UIParent:GetWidth()) or nil
+    local cx = (b.GetCenter and select(1, b:GetCenter())) or nil
+    if px and cx and (cx < 10 or cx > (px - 10)) then
+      if H.hearthBtn then
+        b:ClearAllPoints(); b:SetPoint("RIGHT", H.hearthBtn, "LEFT", -8, 0)
+      elseif H.potionBtn then
+        b:ClearAllPoints(); b:SetPoint("LEFT", H.potionBtn, "RIGHT", 8, 0)
+      else
+        b:ClearAllPoints(); b:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
+      end
+      b:Show()
+    end
+    if H.ReanchorUtilities then pcall(function() H.ReanchorUtilities() end) end
   end
-  AddRacial()
+  pcall(function() AddRacialUtility() end)
+
+  -- Retry racial creation after spells load / changes (login timing on Classic)
+  if not H._racialEventFrame then
+    local rf = CreateFrame("Frame")
+    H._racialEventFrame = rf
+    rf:RegisterEvent("PLAYER_LOGIN")
+    rf:RegisterEvent("PLAYER_ENTERING_WORLD")
+    rf:RegisterEvent("SPELLS_CHANGED")
+    rf:RegisterEvent("PLAYER_REGEN_ENABLED")
+    rf:RegisterEvent("UNIT_AURA")
+    rf:SetScript("OnEvent", function(self, event, ...)
+      if event == "UNIT_AURA" then
+        local unit = ...
+        if unit ~= "player" then return end
+      end
+      if H._pendingRacialBuild and (not InCombatLockdown or not InCombatLockdown()) then
+        H._pendingRacialBuild = nil
+      end
+      if H._pendingUtilityRebuild and (not InCombatLockdown or not InCombatLockdown()) then
+        H._pendingUtilityRebuild = nil
+        if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+      end
+      if (not H.racialBtn) or (not H.racialBtn:IsShown()) or H._pendingRacialBuild then
+        pcall(function() AddRacialUtility() end)
+      end
+    end)
+  end
   H.classCDButtons = buttons
 
-  -- Place mana potion button with class cooldown row (rightmost position)
-  if H.manaBtn then
-    local idx = (#(H.classCDButtons or {})) + 1
-    local parent = anchorParent
-    H.manaBtn:ClearAllPoints()
-    H.manaBtn:SetPoint("TOP", parent, "BOTTOM", startX + (idx-1)*32, anchorY)
+  -- Position utility buttons correctly after creation
+  -- RebuildUtilityButtons will be called again after bag scan updates visibility
+  pcall(function() 
+    if H.RebuildUtilityButtons then 
+      H.RebuildUtilityButtons() 
+    end 
+  end)
+
+  -- Rebuild function for utilities (called from options when settings change)
+  function H.RebuildUtilityButtons()
+    if InCombatLockdown and InCombatLockdown() then
+      H._pendingUtilityRebuild = true
+      return
+    end
+
+    local buttonSize = (HardcoreHUDDB.utilities and HardcoreHUDDB.utilities.buttonSize) or 28
+    local buttonGap = (HardcoreHUDDB.utilities and HardcoreHUDDB.utilities.buttonGap) or 8
+    local independent = (HardcoreHUDDB.utilities and HardcoreHUDDB.utilities.independent) or false
+    local offsetX = (HardcoreHUDDB.utilities and HardcoreHUDDB.utilities.offsetX) or 0
+    local offsetY = (HardcoreHUDDB.utilities and HardcoreHUDDB.utilities.offsetY) or -36
+
+    -- Update utility button sizes
+    local utilButtons = { H.potionBtn, H.manaBtn, H.bandageBtn, H.hearthBtn, H.racialBtn }
+    for _, btn in ipairs(utilButtons) do
+      if btn then
+        btn:SetSize(buttonSize, buttonSize)
+      end
+    end
+    
+    -- Ensure mana button is always shown (grayed if empty)
+    if H.manaBtn then
+      H.manaBtn:Show()
+    end
+
+    -- Update utility button gaps and positions
+    -- Correctly center all visible buttons as a single group to prevent gaps
+    -- Order: Bandage, HP-Pot, Mana-Pot, Hearth, Racial
+    local utilOrder = { H.bandageBtn, H.potionBtn, H.manaBtn, H.hearthBtn, H.racialBtn }
+    local visible = {}
+    for _, b in ipairs(utilOrder) do
+      -- Force show mana button before checking IsShown
+      if b == H.manaBtn and b then
+        b:Show()
+      end
+      if b and b:IsShown() then table.insert(visible, b) end
+    end
+
+    if #visible > 0 then
+      local totalW = (#visible * buttonSize) + ((#visible - 1) * buttonGap)
+      local startX = -(totalW / 2) + (buttonSize / 2)
+      
+      local anchorFrame = (H.bars and H.bars.combo) or (H.bars and H.bars.pow) or UIParent
+      local anchorPt = "BOTTOM"
+      local myPt = "TOP"
+      local baseX = 0
+      local baseY = -8
+      
+      if anchorFrame == UIParent then 
+         anchorPt = "CENTER"; myPt = "CENTER"; baseY = -40 
+      end
+      
+      if independent then
+         anchorFrame = UIParent
+         anchorPt = "CENTER"
+         myPt = "CENTER"
+         baseX = offsetX
+         baseY = offsetY
+      end
+
+      for i, btn in ipairs(visible) do
+        btn:ClearAllPoints()
+        local x = baseX + startX + ((i-1) * (buttonSize + buttonGap))
+        btn:SetPoint(myPt, anchorFrame, anchorPt, x, baseY)
+      end
+    end
+    
+    -- Force mana button visible after rebuild (in case it was hidden)
+    if H.manaBtn then
+      H.manaBtn:Show()
+    end
+
+
+    -- Update CD button sizes and positioning
+    if H.classCDButtons then
+      local cdSize = buttonSize
+      local cdGap = buttonGap
+      local anchorParent = H.utilRow or (H.bars and (H.bars.pow or H.bars.combo)) or UIParent
+      local baseOffsetY = independent and offsetY or -36
+      local baseOffsetX = independent and offsetX or 0
+
+      for idx, btn in ipairs(H.classCDButtons) do
+        btn:SetSize(cdSize, cdSize)
+        btn:ClearAllPoints()
+        local xPos = baseOffsetX + (-((#H.classCDButtons * cdSize) / 2) + 15) + (idx-1) * (cdSize + cdGap)
+        btn:SetPoint("TOP", anchorParent, "BOTTOM", xPos, baseOffsetY)
+      end
+    end
+    
+    -- Apply offset relative to the calculated CD bar position
+    -- Note: independent offsets for utilities are handled in the block above.
+    
+    if HardcoreHUDDB and HardcoreHUDDB.debug then
+      DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Utility buttons rebuilt: size=" ..buttonSize.. " gap=" ..buttonGap.. " independent=" ..(independent and "YES" or "NO"))
+    end
+  end
+
+  -- Hide legacy Bars.lua cdIcons to avoid duplicate class cooldown rows
+  if H.bars and H.bars.cdIcons then
+    for _, info in ipairs(H.bars.cdIcons) do
+      if info and info.btn and info.btn.Hide then pcall(function() info.btn:Hide() end) end
+    end
   end
 
   -- Emergency CD configuration (pulsing border when ready & HP below threshold)
@@ -721,19 +1275,23 @@ function H.BuildUtilities()
           if b.cooldown and duration > 0.1 then b.cooldown:SetCooldown(start, duration); b.cooldown:Show() end
           if b.icon and b.icon.SetDesaturated then b.icon:SetDesaturated(true) end
           if b.dim then b.dim:Show() end
-          b.cdText:SetText(ShortTime(remain))
-          b.cdText:Show()
+          if b.cdText then b.cdText:SetText(ShortTime(remain)); b.cdText:Show() end
           b:SetAlpha(1)
         else
           if b.cooldown then b.cooldown:Hide() end
-          b.cdText:Hide(); b:SetAlpha(1)
+          if b.cdText then b.cdText:Hide() end
+          b:SetAlpha(1)
           if b.icon and b.icon.SetDesaturated then b.icon:SetDesaturated(false) end
           if b.dim then b.dim:Hide() end
         end
         -- Emergency pulse logic
         if HardcoreHUDDB.emergency and HardcoreHUDDB.emergency.enabled and EMERGENCY_SPELLS[b.spellID] then
-          -- Suppress emergency pulse when dead or a ghost
-          if (UnitIsDead and UnitIsDead("player")) or (UnitIsGhost and UnitIsGhost("player")) then
+          -- Suppress emergency pulse when dead, ghost, or UI panel is open
+          local uiPanelOpen = false
+          if InterfaceOptionsFrame and InterfaceOptionsFrame:IsShown() then uiPanelOpen = true end
+          if GameMenuFrame and GameMenuFrame:IsShown() then uiPanelOpen = true end
+          
+          if (UnitIsDead and UnitIsDead("player")) or (UnitIsGhost and UnitIsGhost("player")) or uiPanelOpen then
             if b._pulseBorder then b._pulseBorder:Hide() end
           else
           local hp = UnitHealth("player") or 0
@@ -765,8 +1323,8 @@ function H.BuildUtilities()
       end
       -- Potion cooldown (spiral + dim + big number)
       if H.potionBtn and H.potionBtn.itemID then
-        local ps, pd, pe = GetItemCooldown(H.potionBtn.itemID)
-        if pe == 1 and pd and pd > 0 and ps and ps > 0 then
+        local ps, pd, pe = GetItemCooldownSafe(H.potionBtn.itemID)
+        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
           if H.potionBtn.cooldown then H.potionBtn.cooldown:SetCooldown(ps, pd); H.potionBtn.cooldown:Show() end
@@ -780,10 +1338,27 @@ function H.BuildUtilities()
           if H.potionBtn.dim then H.potionBtn.dim:Hide() end
         end
       end
+      -- Mana potion cooldown (spiral + dim + big number)
+      if H.manaBtn and H.manaBtn.itemID then
+        local ps, pd, pe = GetItemCooldownSafe(H.manaBtn.itemID)
+        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
+          local prem = (ps + pd) - GetTime()
+          if prem < 0 then prem = 0 end
+          if H.manaBtn.cooldown then H.manaBtn.cooldown:SetCooldown(ps, pd); H.manaBtn.cooldown:Show() end
+          if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(true) end
+          if H.manaBtn.dim then H.manaBtn.dim:Show() end
+          if H.manaBtn.cdText then H.manaBtn.cdText:SetText(ShortTime(prem)); H.manaBtn.cdText:Show() end
+        else
+          if H.manaBtn.cooldown then H.manaBtn.cooldown:Hide() end
+          if H.manaBtn.cdText then H.manaBtn.cdText:Hide() end
+          if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(false) end
+          if H.manaBtn.dim then H.manaBtn.dim:Hide() end
+        end
+      end
       -- Hearthstone cooldown (spiral + dim + big number)
       if H.hearthBtn and H.hearthBtn.itemID then
-        local ps, pd, pe = GetItemCooldown(H.hearthBtn.itemID)
-        if pe == 1 and pd and pd > 0 and ps and ps > 0 then
+        local ps, pd, pe = GetItemCooldownSafe(H.hearthBtn.itemID)
+        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
           if H.hearthBtn.cooldown then H.hearthBtn.cooldown:SetCooldown(ps, pd); H.hearthBtn.cooldown:Show() end
@@ -797,10 +1372,26 @@ function H.BuildUtilities()
           if H.hearthBtn.dim then H.hearthBtn.dim:Hide() end
         end
       end
+      -- Racial cooldown (utility row)
+      if H.racialBtn and H.racialBtn.spellID then
+        local s, d, e = GetSpellCooldown(H.racialBtn.spellID)
+        if e == 1 and d and d > 0 and s and s > 0 then
+          local rem = (s + d) - GetTime(); if rem < 0 then rem = 0 end
+          if H.racialBtn.cooldown then H.racialBtn.cooldown:SetCooldown(s, d); H.racialBtn.cooldown:Show() end
+          if H.racialBtn.icon and H.racialBtn.icon.SetDesaturated then H.racialBtn.icon:SetDesaturated(true) end
+          if H.racialBtn.dim then H.racialBtn.dim:Show() end
+          if H.racialBtn.cdText then H.racialBtn.cdText:SetText(ShortTime(rem)); H.racialBtn.cdText:Show() end
+        else
+          if H.racialBtn.cooldown then H.racialBtn.cooldown:Hide() end
+          if H.racialBtn.cdText then H.racialBtn.cdText:Hide() end
+          if H.racialBtn.icon and H.racialBtn.icon.SetDesaturated then H.racialBtn.icon:SetDesaturated(false) end
+          if H.racialBtn.dim then H.racialBtn.dim:Hide() end
+        end
+      end
       -- Bandage cooldown (spiral + dim + big number)
       if H.bandageBtn and H.bandageBtn.itemID then
-        local ps, pd, pe = GetItemCooldown(H.bandageBtn.itemID)
-        if pe == 1 and pd and pd > 0 and ps and ps > 0 then
+        local ps, pd, pe = GetItemCooldownSafe(H.bandageBtn.itemID)
+        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
           if H.bandageBtn.cooldown then H.bandageBtn.cooldown:SetCooldown(ps, pd); H.bandageBtn.cooldown:Show() end
@@ -825,57 +1416,32 @@ function H.BuildUtilities()
     ef:RegisterEvent("SPELLS_CHANGED")
     ef:RegisterEvent("PLAYER_TALENT_UPDATE")
     ef:SetScript("OnEvent", function()
-      -- Rebuild buttons
-      for _, b in ipairs(H.classCDButtons or {}) do b:Hide() end
-      H.classCDButtons = nil
-      -- Re-run build utilities fragment for class cds only
-      -- (Avoid rebuilding potion/hearth; just the cooldown segment)
-      local oldButtons = {}
-      local rebuilt = {}
-      local newButtons = {}
-      local newList = cdsByClass[select(2, UnitClass("player"))] or {}
-      local startX2 = -((#newList * 30) / 2) + 15
-      local ap = H.bars and H.bars.combo or UIParent
-      for i, sid in ipairs(newList) do
-        if IsKnown(sid) then
-          local nm, _, ic = GetSpellInfo(sid)
-          if nm then
-            local nb = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
-            nb:SetSize(28,28)
-            -- Use sequential index for rebuilt buttons to avoid gaps
-            local idx = #newButtons + 1
-            nb:SetPoint("TOP", ap, "BOTTOM", startX2 + (idx-1)*32, anchorY)
-            nb:SetAttribute("type", "spell")
-            nb:SetAttribute("spell", nm)
-            nb:SetFrameStrata("HIGH")
-            nb:SetFrameLevel(70 + idx)
-            nb:SetHitRectInsets(0,0,0,0)
-            local nt = nb:CreateTexture(nil, "ARTWORK")
-            nt:SetAllPoints(nb)
-            nt:SetTexture(ic)
-            nb.icon = nt
-            local dim = nb:CreateTexture(nil, "OVERLAY")
-            dim:SetAllPoints(nb)
-            dim:SetColorTexture(0,0,0,0.55)
-            dim:Hide()
-            nb.dim = dim
-            local cd = CreateFrame("Cooldown", nil, nb, "CooldownFrameTemplate")
-            cd:SetAllPoints(nb)
-            cd:Hide()
-            nb.cooldown = cd
-            local ct = nb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            ct:ClearAllPoints()
-            ct:SetPoint("CENTER", nb, "CENTER", 0, 0)
-            if STANDARD_TEXT_FONT then ct:SetFont(STANDARD_TEXT_FONT, 14, "OUTLINE") end
-            ct:SetShadowColor(0,0,0,1)
-            ct:SetShadowOffset(1,-1)
-            nb.cdText = ct
-            AttachSpellTooltip(nb, sid)
-            newButtons[#newButtons+1] = nb
+      -- Only rebuild if classCDButtons doesn't exist yet
+      -- The initial build is done above, this is only for spell changes AFTER initial build
+      if H._classCDBuilt and H.classCDButtons and #H.classCDButtons > 0 then
+        -- Just update cooldown tracking, don't rebuild buttons
+        return
+      end
+      
+      -- If for some reason we need to rebuild, destroy old buttons properly first
+      if H.classCDButtons then
+        for _, b in ipairs(H.classCDButtons) do 
+          -- Use original Hide if available
+          if b._OriginalHide then
+            b._OriginalHide(b)
           end
+          b:ClearAllPoints()
+          b:SetParent(nil)
         end
       end
-      H.classCDButtons = newButtons
+      H.classCDButtons = nil
+      H._classCDBuilt = false
+      
+      -- Re-run build utilities to rebuild class cds
+      if H.BuildUtilities then
+        H._utilitiesBuilt = false  -- Allow rebuild
+        H.BuildUtilities()
+      end
     end)
   end
 
@@ -896,12 +1462,15 @@ function H.BuildUtilities()
           if not GameTooltip:IsOwned(btn) then
             GameTooltip:Hide()
             GameTooltip:SetOwner(btn, "ANCHOR_CURSOR")
-            local link = GetSpellLink(btn.spellID)
+            local link = GetSpellLink and GetSpellLink(btn.spellID) or nil
             if link then
-              GameTooltip:SetHyperlink(link)
+              local ok, res = pcall(function() GameTooltip:SetHyperlink(link) end)
+              if not ok then
+                GameTooltip:ClearLines(); GameTooltip:AddLine(link)
+              end
               GameTooltip:Show()
             else
-              local nm = GetSpellInfo(btn.spellID)
+              local nm = GetSpellInfo and select(1, GetSpellInfo(btn.spellID)) or nil
               GameTooltip:ClearLines()
               if nm then GameTooltip:AddLine(nm,1,1,1) end
               if GetSpellDescription then
@@ -930,24 +1499,83 @@ end
 
 -- Reposition and re-show utility row after layout or level-up changes
 function H.ReanchorUtilities()
+  if InCombatLockdown and InCombatLockdown() then
+    H._pendingReanchorUtilities = true
+    return
+  end
   if not H.potionBtn or not H.bandageBtn or not H.hearthBtn then return end
   local p, bdg, hs = H.potionBtn, H.bandageBtn, H.hearthBtn
   -- Anchor relative to player power/combo bars if available
   if H.bars and H.bars.combo then
-    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.combo, "BOTTOM", -20, -8)
-    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -52, -8)
-    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 20, -8)
+    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -60, -8)
+    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.combo, "BOTTOM", -24, -8)
+    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 12, -8)
   elseif H.bars and H.bars.pow then
-    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.pow, "BOTTOM", -20, -8)
-    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -52, -8)
-    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 20, -8)
+    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -60, -8)
+    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.pow, "BOTTOM", -24, -8)
+    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 12, -8)
   else
-    p:ClearAllPoints(); p:SetPoint("CENTER", UIParent, "CENTER", -20, -40)
     bdg:ClearAllPoints(); bdg:SetPoint("CENTER", UIParent, "CENTER", -72, -40)
+    p:ClearAllPoints(); p:SetPoint("CENTER", UIParent, "CENTER", -36, -40)
     hs:ClearAllPoints(); hs:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
   end
-  -- Ensure visible
-  p:Show(); bdg:Show(); hs:Show()
+  -- Anchor mana button to the right of hearthstone
+  if H.manaBtn then
+    H.manaBtn:ClearAllPoints(); H.manaBtn:SetPoint("LEFT", hs, "RIGHT", 8, 0)
+    H.manaBtn:SetAlpha(1); H.manaBtn:SetScale(1); H.manaBtn:SetFrameStrata("MEDIUM"); H.manaBtn:SetFrameLevel(50)
+    H.manaBtn:Show()
+  end
+  -- Anchor racial button to the right of mana button (or hearthstone if no mana button)
+  if H.racialBtn then
+    if H.manaBtn and H.manaBtn:IsShown() then
+      H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("LEFT", H.manaBtn, "RIGHT", 8, 0)
+    else
+      H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("LEFT", hs, "RIGHT", 8, 0)
+    end
+    H.racialBtn:SetAlpha(1); H.racialBtn:SetScale(1); H.racialBtn:SetFrameStrata("MEDIUM"); H.racialBtn:SetFrameLevel(50)
+    H.racialBtn:Show()
+  end
+  -- Ensure visible and not "poisoned" by any prior hide logic
+  if p.SetAlpha then p:SetAlpha(1) end
+  if p.SetScale then p:SetScale(1) end
+  if p.SetFrameStrata then p:SetFrameStrata("MEDIUM") end
+  if p.SetFrameLevel then p:SetFrameLevel(50) end
+  if bdg.SetAlpha then bdg:SetAlpha(1) end
+  if bdg.SetScale then bdg:SetScale(1) end
+  if bdg.SetFrameStrata then bdg:SetFrameStrata("MEDIUM") end
+  if bdg.SetFrameLevel then bdg:SetFrameLevel(50) end
+  if hs.SetAlpha then hs:SetAlpha(1) end
+  if hs.SetScale then hs:SetScale(1) end
+  if hs.SetFrameStrata then hs:SetFrameStrata("MEDIUM") end
+  if hs.SetFrameLevel then hs:SetFrameLevel(50) end
+  -- Don't show p automatically; let the updater control visibility based on potion count
+  if bdg._hasFirstAid then bdg:Show() end; hs:Show()
+  -- Align racial and mana buttons on the utility row if present
+  if H.racialBtn then
+    if H.racialBtn.SetClampedToScreen then H.racialBtn:SetClampedToScreen(true) end
+    if H.racialBtn.SetAlpha then H.racialBtn:SetAlpha(1) end
+    if H.racialBtn.SetScale then H.racialBtn:SetScale(1) end
+    if H.racialBtn.SetFrameStrata then H.racialBtn:SetFrameStrata("MEDIUM") end
+    if H.racialBtn.SetFrameLevel then H.racialBtn:SetFrameLevel(50) end
+    local rightAnchor = (H.manaBtn and H.manaBtn.IsShown and H.manaBtn:IsShown() and H.manaBtn) or hs
+    if rightAnchor then
+      H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("LEFT", rightAnchor, "RIGHT", 8, 0); H.racialBtn:Show()
+    end
+
+    -- Fallback if the chosen anchor is off-screen for the current UIParent width.
+    local px = (UIParent and UIParent.GetWidth and UIParent:GetWidth()) or nil
+    local cx = (H.racialBtn.GetCenter and select(1, H.racialBtn:GetCenter())) or nil
+    if px and cx and (cx < 10 or cx > (px - 10)) then
+      if hs then
+        H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("RIGHT", hs, "LEFT", -8, 0); H.racialBtn:Show()
+      end
+    end
+  end
+  if H.manaBtn and hs then
+    H.manaBtn:ClearAllPoints(); H.manaBtn:SetPoint("LEFT", hs, "RIGHT", 8, 0)
+    -- Always show mana button (will be grayed if no potions)
+    H.manaBtn:Show()
+  end
 end
 
 -- Auto-reanchor utilities on common rebuild events
@@ -956,8 +1584,19 @@ do
   rf:RegisterEvent("PLAYER_LEVEL_UP")
   rf:RegisterEvent("PLAYER_ENTERING_WORLD")
   rf:RegisterEvent("SPELLS_CHANGED")
+  rf:RegisterEvent("PLAYER_REGEN_ENABLED")
   rf:SetScript("OnEvent", function()
-    if H.ReanchorUtilities then H.ReanchorUtilities() end
+    if H._pendingReanchorUtilities and (not InCombatLockdown or not InCombatLockdown()) then
+      H._pendingReanchorUtilities = nil
+    end
+    -- Use RebuildUtilityButtons instead of ReanchorUtilities for modern centered layout
+    if H.RebuildUtilityButtons then 
+      H.RebuildUtilityButtons()
+    end
+    -- Force mana button visible after any rebuild
+    if H.manaBtn then
+      pcall(function() H.manaBtn:Show() end)
+    end
   end)
 end
 
@@ -972,6 +1611,10 @@ function H.SetHUDMouseEnabled(isLocked)
     if H.bars.targetPow and H.bars.targetPow.EnableMouse then H.bars.targetPow:EnableMouse(enableBarsMouse) end
     if H.bars.fs and H.bars.fs.EnableMouse then H.bars.fs:EnableMouse(enableBarsMouse) end
     if H.bars.tick and H.bars.tick.EnableMouse then H.bars.tick:EnableMouse(enableBarsMouse) end
+  end
+  -- Also toggle root frame mouse so it doesn't intercept clicks when options are shown
+  if H.root and H.root.EnableMouse then
+    pcall(function() H.root:EnableMouse(enableBarsMouse) end)
   end
   -- Utility buttons should remain clickable; do not disable
   -- H.potionBtn, H.manaBtn, H.bandageBtn, H.hearthBtn remain enabled
@@ -1432,13 +2075,16 @@ function H.InitReminders()
   else
     rf:SetPoint("TOP", UIParent, "TOP", 0, -140)
   end
-  if rf.SetFrameStrata then rf:SetFrameStrata("DIALOG") end
-  rf:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=12, insets={left=3,right=3,top=3,bottom=3} })
-  rf:SetBackdropColor(0,0,0,0.75)
+  if rf.SetFrameStrata then rf:SetFrameStrata("MEDIUM") end
+  H.SafeBackdrop(rf, { bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=12, insets={left=3,right=3,top=3,bottom=3} }, 0,0,0,0.75)
   rf.text = rf:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   rf.text:SetPoint("TOPLEFT", rf, "TOPLEFT", 6, -6)
   rf.text:SetJustifyH("LEFT")
-  rf:EnableMouse(true)
+  -- Disable mouse/keyboard to prevent blocking game input
+  rf:EnableMouse(false)
+  rf:SetMouseClickEnabled(false)
+  if rf.EnableKeyboard then rf:EnableKeyboard(false) end
+  if rf.SetPropagateKeyboardInput then rf:SetPropagateKeyboardInput(true) end
   rf:Hide()
   H.reminderFrame = rf
 
@@ -1487,55 +2133,45 @@ function H.InitReminders()
       return name
     end
     local function FirstItemBySubtype(subtype)
-      for bag=0,4 do
-        local slots = GetContainerNumSlots(bag) or 0
-        for slot=1,slots do
-          local id = GetContainerItemID(bag,slot)
-          if id then
-            local name, _, _, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(id)
-            if not name then name = GetItemNameSafe(id, bag, slot) end
-            local lname = string.lower(name or "")
-            local isConsum = (itemType == "Consumable")
-            local subtypeMatch = (itemSubType == subtype)
-            -- Name-based fallback when item info not cached yet
-            if not subtypeMatch and subtype == "Food & Drink" then
-              if string.find(lname, "food") or string.find(lname, "feast") or string.find(lname, "water") or string.find(lname, "drink") or string.find(lname, "bread") or string.find(lname, "fish") then
-                subtypeMatch = true
-              end
-              -- Spell-text heuristic: treat items with eating effects as food
-              if not subtypeMatch and GetItemSpell then
-                local sp = GetItemSpell(id)
-                local lsp = string.lower(sp or "")
-                if lsp ~= "" then
-                  local isDrink = string.find(lsp, "drink") or string.find(lsp, "drinking") or string.find(lsp, "beverage")
-                  local isFood = string.find(lsp, "eat") or string.find(lsp, "eating") or string.find(lsp, "restores health") or string.find(lsp, "well fed")
-                  if isFood and not isDrink then subtypeMatch = true end
-                end
-              end
-            elseif not subtypeMatch and (subtype == "Flask" or subtype == "Elixir") then
-              if string.find(lname, string.lower(subtype)) then subtypeMatch = true end
-            end
-            if isConsum and subtypeMatch then
-              if subtype == "Food & Drink" then
-                local sp = GetItemSpell and GetItemSpell(id)
-                if sp and string.find(string.lower(sp), "drink") then
-                  -- skip drinks
-                else
-                  -- Prefer whitelisted foods, but fall back to any food item
-                  if H.IsWhitelistedFood(name) then
-                    return id, texture
-                  else
-                    return id, texture
-                  end
-                end
-              else
-                return id, texture
-              end
+      local a,b = SafeFindInBags(function(bag, slot)
+        local id = GetContainerItemID and GetContainerItemID(bag,slot)
+        if not id then return nil end
+        local name, _, _, _, _, itemType, itemSubType, _, _, texture = GetItemInfo(id)
+        if not name then name = GetItemNameSafe(id, bag, slot) end
+        local lname = string.lower(name or "")
+        local isConsum = (itemType == "Consumable")
+        local subtypeMatch = (itemSubType == subtype)
+        if not subtypeMatch and subtype == "Food & Drink" then
+          if string.find(lname, "food") or string.find(lname, "feast") or string.find(lname, "water") or string.find(lname, "drink") or string.find(lname, "bread") or string.find(lname, "fish") then
+            subtypeMatch = true
+          end
+          if not subtypeMatch and GetItemSpell then
+            local sp = GetItemSpell(id)
+            local lsp = string.lower(sp or "")
+            if lsp ~= "" then
+              local isDrink = string.find(lsp, "drink") or string.find(lsp, "drinking") or string.find(lsp, "beverage")
+              local isFood = string.find(lsp, "eat") or string.find(lsp, "eating") or string.find(lsp, "restores health") or string.find(lsp, "well fed")
+              if isFood and not isDrink then subtypeMatch = true end
             end
           end
+        elseif not subtypeMatch and (subtype == "Flask" or subtype == "Elixir") then
+          if string.find(lname, string.lower(subtype)) then subtypeMatch = true end
         end
-      end
-      return nil
+        if isConsum and subtypeMatch then
+          if subtype == "Food & Drink" then
+            local sp = GetItemSpell and GetItemSpell(id)
+            if sp and string.find(string.lower(sp), "drink") then
+              return nil
+            else
+              return id, texture
+            end
+          else
+            return id, texture
+          end
+        end
+        return nil
+      end)
+      return a, b
     end
     local function IsUtilityElixirName(lname, itemID)
       lname = lname or ""
@@ -1680,14 +2316,70 @@ function H.InitReminders()
 
     -- Flask/Elixirs disabled: do nothing
 
+    -- Check if player knows a spell (required before showing reminder buttons)
+    local function IsSpellLearned(spellName)
+      -- First try GetSpellInfo to get the spell ID
+      local _, spellID = GetSpellInfo(spellName)
+      if spellID and spellID > 0 then
+        -- Try C_SpellBook.IsSpellKnown with numeric ID
+        if C_SpellBook and C_SpellBook.IsSpellKnown then
+          if pcall(C_SpellBook.IsSpellKnown, spellID) then
+            return C_SpellBook.IsSpellKnown(spellID)
+          end
+        end
+        -- Fallback to IsPlayerSpell with numeric ID
+        if IsPlayerSpell and pcall(IsPlayerSpell, spellID) then
+          return IsPlayerSpell(spellID)
+        end
+      end
+      -- Fallback: check spellbook for the spell name (most reliable for Classic)
+      if GetSpellBookItemName then
+        local i = 1
+        while true do
+          local name = GetSpellBookItemName(i, BOOKTYPE_SPELL)
+          if not name then break end
+          if name == spellName then return true end
+          -- Also check if name is in the spellbook (case-insensitive prefix match for rank variants)
+          if string.find(name, spellName, 1, true) then return true end
+          i = i + 1
+          if i > 300 then break end
+        end
+      end
+      return false
+    end
+    
+    -- Helper to check if a profession skill is learned (First Aid, etc)
+    local function IsSkillLearned(skillName)
+      if not GetSkillLineInfo then return false end
+      local line = 1
+      while true do
+        local name, _, _, cap = GetSkillLineInfo(line)
+        if not name then break end
+        if name == skillName then
+          return cap and cap > 0
+        end
+        line = line + 1
+        if line > 200 then break end
+      end
+      return false
+    end
+
     -- Class self-buffs buttons (show only when missing and category enabled)
     local function AddSpellIfKnown(spellName)
-      local name, _, tex = GetSpellInfo(spellName)
-      -- More reliable texture resolution: try GetSpellTexture when icon is nil
-      if not tex or tex == "" then
-        if GetSpellTexture then tex = GetSpellTexture(spellName) end
-      end
-      if name then table.insert(entries, {kind="spell", spell=name, texture=tex, label=name}) end
+        -- CRITICAL: Only add the button if the player has actually learned this spell
+        if not IsSpellLearned(spellName) then return end
+        
+        local name, _, tex = GetSpellInfo and GetSpellInfo(spellName)
+        -- More reliable texture resolution: try GetSpellTexture when icon is nil
+        if (not tex or tex == "") and GetSpellTexture then tex = GetSpellTexture(spellName) end
+        -- If we reach here, spell is learned but GetSpellInfo returned nil (localized client)
+        if not name then
+          name = spellName
+          if not tex or tex == "" then tex = "Interface/Icons/INV_Misc_QuestionMark" end
+          table.insert(entries, {kind="spell", spell=name, texture=tex, label=name, unresolved=true})
+        else
+          table.insert(entries, {kind="spell", spell=name, texture=tex, label=name})
+        end
     end
     -- From our ExpectedClassBuffs + core self-cast options
     local class = select(2, UnitClass("player"))
@@ -1798,6 +2490,9 @@ function H.InitReminders()
       if rf.btns[i] then return rf.btns[i] end
       local b = CreateFrame("Button", nil, rf, "SecureActionButtonTemplate")
       b:SetSize(size, size)
+      -- Ensure keyboard input is propagated through reminder buttons
+      if b.EnableKeyboard then b:EnableKeyboard(false) end
+      if b.SetPropagateKeyboardInput then b:SetPropagateKeyboardInput(true) end
       b.bg = b:CreateTexture(nil, "BACKGROUND")
       b.bg:SetAllPoints()
       b.bg:SetColorTexture(0.45, 0.05, 0.05, 0.85)
@@ -1811,8 +2506,13 @@ function H.InitReminders()
         GameTooltip:ClearLines()
         if self.kind == "item" and self.itemID then
           local name, link = GetItemInfo(self.itemID)
-          if link and GameTooltip.SetHyperlink then
-            GameTooltip:SetHyperlink(link)
+          if link then
+            local ok = pcall(function() GameTooltip:SetHyperlink(link) end)
+            if not ok and GameTooltip.SetBagItem and self.bag and self.slot then
+              GameTooltip:SetBagItem(self.bag, self.slot)
+            elseif not ok then
+              GameTooltip:SetText(name or (self.label or "Item"))
+            end
           elseif GameTooltip.SetBagItem and self.bag and self.slot then
             GameTooltip:SetBagItem(self.bag, self.slot)
           else
@@ -1863,9 +2563,13 @@ function H.InitReminders()
       end
       if not resolvedTex or resolvedTex == "" then resolvedTex = "Interface/Icons/INV_Misc_QuestionMark" end
       b.icon:SetTexture(resolvedTex)
-      if not InCombatLockdown() then
-        b:SetAttribute("type", "item"); b:SetAttribute("item", "item:"..tostring(id))
+      local attrItem = nil
+      if GetItemInfo then
+        local iname = GetItemInfo(id)
+        if iname and iname ~= "" then attrItem = iname end
       end
+      if not attrItem then attrItem = "item:"..tostring(id) end
+      H.QueueSetAttribute(b, "type", "item"); H.QueueSetAttribute(b, "item", attrItem)
       if GetItemCount then b.count:SetText(GetItemCount(id)) else b.count:SetText("") end
     end
     local function setSpell(b, name, tex)
@@ -1883,9 +2587,7 @@ function H.InitReminders()
         end
       end
       b.icon:SetTexture(resolvedTex)
-      if not InCombatLockdown() then
-        b:SetAttribute("type", "spell"); b:SetAttribute("spell", name)
-      end
+      H.QueueSetAttribute(b, "type", "spell"); H.QueueSetAttribute(b, "spell", name)
       b.count:SetText("")
     end
 
@@ -1964,6 +2666,180 @@ function H.InitReminders()
     print("HardcoreHUD: Player buffs -> "..table.concat(present, ", "))
   end
 
+  -- Debug command to check button positions
+  SLASH_HHDBGBTNS1 = "/hhdbg"
+  SlashCmdList["HHDBGBTNS"] = function()
+    local function CheckBtn(name, btn)
+      if not btn then
+        print(name..": NIL")
+        return
+      end
+      local shown = (btn.IsShown and btn:IsShown()) and "SHOWN" or "HIDDEN"
+      local visible = (btn.IsVisible and btn:IsVisible()) and "VISIBLE" or "NOT_VISIBLE"
+      local w, h = 0, 0
+      if btn.GetSize then w, h = btn:GetSize() end
+      local x, y = nil, nil
+      if btn.GetCenter then x, y = btn:GetCenter() end
+      local a = (btn.GetAlpha and btn:GetAlpha()) or 1
+      local s = (btn.GetScale and btn:GetScale()) or 1
+      local strata = (btn.GetFrameStrata and btn:GetFrameStrata()) or "?"
+      local level = (btn.GetFrameLevel and btn:GetFrameLevel()) or 0
+      local npts = (btn.GetNumPoints and btn:GetNumPoints()) or 0
+      local p1, relTo, relPoint, offX, offY = nil, nil, nil, nil, nil
+      if btn.GetPoint and npts and npts > 0 then
+        p1, relTo, relPoint, offX, offY = btn:GetPoint(1)
+      end
+      local relName = "nil"
+      if type(relTo) == "table" and relTo.GetName then
+        relName = relTo:GetName() or "(anon)"
+      end
+      print(string.format(
+        "%s: %s/%s alpha=%.2f scale=%.3f strata=%s lvl=%d size=%dx%d center=%s,%s points=%d p1=%s rel=%s rp=%s off=%s,%s",
+        name, shown, visible, a or 1, s or 1, tostring(strata), level or 0, w or 0, h or 0,
+        (x and string.format("%.1f", x) or "nil"),
+        (y and string.format("%.1f", y) or "nil"),
+        npts or 0,
+        tostring(p1), tostring(relName), tostring(relPoint), tostring(offX), tostring(offY)
+      ))
+    end
+    CheckBtn("potionBtn", H.potionBtn)
+    CheckBtn("manaBtn", H.manaBtn)
+    CheckBtn("bandageBtn", H.bandageBtn)
+    CheckBtn("hearthBtn", H.hearthBtn)
+    CheckBtn("racialBtn", H.racialBtn)
+  end
+
+  -- Debug command to force utility buttons to the center of the screen.
+  -- This helps distinguish "off-screen/bad anchor" from "not rendering".
+  SLASH_HHFORCE1 = "/hhforce"
+  SlashCmdList["HHFORCE"] = function()
+    -- Debug override: keep mana button visible even if not a mana class,
+    -- otherwise it may get hidden again by normal visibility logic.
+    H._forceShowManaBtn = true
+    if C_Timer and C_Timer.After then
+      C_Timer.After(10, function() H._forceShowManaBtn = nil end)
+    end
+
+    local function Force(btn, dx)
+      if not btn then return end
+      pcall(function()
+        if btn.SetClampedToScreen then btn:SetClampedToScreen(true) end
+        btn:ClearAllPoints()
+        btn:SetPoint("CENTER", UIParent, "CENTER", dx or 0, -40)
+        if btn.SetAlpha then btn:SetAlpha(1) end
+        if btn.SetScale then btn:SetScale(1) end
+        if btn.SetFrameStrata then btn:SetFrameStrata("HIGH") end
+        if btn.SetFrameLevel then btn:SetFrameLevel(200) end
+        btn:Show()
+      end)
+    end
+    Force(H.bandageBtn, -64)
+    Force(H.potionBtn, -32)
+    Force(H.hearthBtn, 0)
+    Force(H.racialBtn, 32)
+    Force(H.manaBtn, 64)
+    print("[HardcoreHUD] Forced utility buttons to center. Use /hhdbg to inspect.")
+  end
+
+  -- Test/Debug Range Display directly
+  SLASH_HHSHOWRANGE1 = "/hhshowrange"
+  SlashCmdList["HHSHOWRANGE"] = function(args)
+    if args and string.lower(args) == "off" then
+      H._debugRangeDisplay = false
+      print("[HardcoreHUD] Debug mode OFF")
+      return
+    end
+    
+    if H.rangeDisplay then
+      print("[HardcoreHUD] Range Display Debug Mode ON")
+      print("Current settings:")
+      print("  warnings:", HardcoreHUDDB.warnings and "exists" or "nil")
+      print("  warnings.enabled:", HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled or "nil")
+      print("  rangeDisplay:", HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.rangeDisplay and "exists" or "nil")
+      print("  rangeDisplay.enabled:", HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.rangeDisplay and HardcoreHUDDB.warnings.rangeDisplay.enabled or "nil")
+      
+      -- Enable it
+      HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
+      HardcoreHUDDB.warnings.enabled = true
+      HardcoreHUDDB.warnings.rangeDisplay = HardcoreHUDDB.warnings.rangeDisplay or {}
+      HardcoreHUDDB.warnings.rangeDisplay.enabled = true
+      
+      print("After enabling:")
+      print("  warnings.enabled:", HardcoreHUDDB.warnings.enabled)
+      print("  rangeDisplay.enabled:", HardcoreHUDDB.warnings.rangeDisplay.enabled)
+      
+      -- Set debug flag to prevent hiding
+      H._debugRangeDisplay = true
+      
+      -- Force show it
+      H.rangeDisplay:ClearAllPoints()
+      H.rangeDisplay:SetPoint("CENTER", UIParent, "CENTER", 0, -100)
+      H.rangeDisplay:SetAlpha(1)
+      H.rangeDisplay:SetScale(1)
+      if H.rangeDisplay.SetFrameStrata then
+        H.rangeDisplay:SetFrameStrata("HIGH")
+      end
+      if H.rangeDisplay.SetFrameLevel then
+        H.rangeDisplay:SetFrameLevel(500)
+      end
+      H.rangeDisplay:Show()
+      
+      print("Use '/hhshowrange off' to disable debug mode")
+    else
+      print("[HardcoreHUD] Range Display frame not found!")
+    end
+  end
+
+  -- Set Range Display Font Size
+  SLASH_HHRANGEFONT1 = "/hhrangefont"
+  SlashCmdList["HHRANGEFONT"] = function(args)
+    local size = tonumber(args)
+    if not size or size < 8 or size > 48 then
+      print("[HardcoreHUD] Usage: /hhrangefont <8-48>")
+      print("[HardcoreHUD] Current size:", HardcoreHUDDB.warnings.rangeDisplay.fontSize or 24)
+      return
+    end
+    
+    HardcoreHUDDB.warnings.rangeDisplay.fontSize = size
+    if H.rangeDisplay and H.rangeDisplay.text then
+      local fontPath = STANDARD_TEXT_FONT or GameFontNormal:GetFont()
+      H.rangeDisplay.text:SetFont(fontPath, size, "OUTLINE")
+      print("[HardcoreHUD] Range Display font size set to", size)
+    end
+  end
+
+  -- Test/Debug Leash and Range Displays
+  SLASH_HHTESTLEASH1 = "/hhtestleash"
+  SlashCmdList["HHTESTLEASH"] = function()
+    HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
+    HardcoreHUDDB.warnings.leash = HardcoreHUDDB.warnings.leash or {}
+    HardcoreHUDDB.warnings.rangeDisplay = HardcoreHUDDB.warnings.rangeDisplay or {}
+    
+    -- Enable both
+    HardcoreHUDDB.warnings.enabled = true
+    HardcoreHUDDB.warnings.leash.enabled = true
+    HardcoreHUDDB.warnings.rangeDisplay.enabled = true
+    
+    print("[HardcoreHUD] Leash and Range Display enabled.")
+    print("Leash config:", HardcoreHUDDB.warnings.leash.enabled)
+    print("Range config:", HardcoreHUDDB.warnings.rangeDisplay.enabled)
+    
+    -- Debug: Check if frames exist
+    print("Leash frame exists:", H.leashWarn and "YES" or "NO")
+    print("Range frame exists:", H.rangeDisplay and "YES" or "NO")
+    
+    -- Try to show them if a target exists
+    if H.CheckLeashDistance then H.CheckLeashDistance() end
+    if H.CheckRangeDisplay then H.CheckRangeDisplay() end
+    
+    -- Additional debug output
+    if H.rangeDisplay then
+      print("Range frame visible:", H.rangeDisplay:IsShown() and "YES" or "NO")
+      print("Range frame position:", H.rangeDisplay:GetPoint())
+      print("Range frame size:", H.rangeDisplay:GetSize())
+    end
+  end
+
   local ev = CreateFrame("Frame")
   ev:RegisterEvent("UNIT_AURA")
   ev:RegisterEvent("PLAYER_LOGIN")
@@ -1991,19 +2867,6 @@ function H.InitReminders()
     -- 3.3.5 clients do not have C_Timer; run once immediately
     UpdateReminders()
   end
-
-  -- Tooltip: show category rules
-  rf:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:ClearLines()
-    GameTooltip:AddLine("Buff Reminders", 1,1,1)
-    GameTooltip:AddLine(" ")
-    local cats = HardcoreHUDDB.reminders.categories or {}
-    -- Food/Elixirs tooltips disabled per user request
-    if cats.survival then GameTooltip:AddLine("Core Buffs", 0.9,0.9,0.9) end
-    GameTooltip:Show()
-  end)
-  rf:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 -- Auto-init after utilities build
@@ -2138,13 +3001,24 @@ do
   local function applyProps(frame, shown)
     if not frame then return end
     if shown then
-      local p = prevProps[frame]
-      if p then
-        if frame.SetAlpha then frame:SetAlpha(p.alpha or 1) end
-        if frame.SetFrameStrata and p.strata then frame:SetFrameStrata(p.strata) end
-        if frame.EnableMouse then frame:EnableMouse(true) end
-        if frame.SetScale and p.scale then frame:SetScale(p.scale) end
+      -- Special case: don't show bandage button if First Aid is not learned
+      if frame == H.bandageBtn and H.bandageBtn._hasFirstAid == false then
+        frame:Hide()
+        return
       end
+      
+      local p = prevProps[frame]
+      -- Always restore sane visibility defaults; otherwise a prior "strong hide"
+      -- can leave the frame technically shown but invisible (alpha=0 / tiny scale).
+      local a = (p and p.alpha) or 1
+      local sc = (p and p.scale) or 1
+      -- Guard against poisoned cached values (e.g. 0 / ~0) which make frames invisible.
+      if type(a) == "number" and a < 0.05 then a = 1 end
+      if type(sc) == "number" and sc < 0.05 then sc = 1 end
+      if frame.SetAlpha then frame:SetAlpha(a) end
+      if frame.SetScale then frame:SetScale(sc) end
+      if frame.SetFrameStrata and (p and p.strata) then frame:SetFrameStrata(p.strata) end
+      if frame.EnableMouse then frame:EnableMouse(true) end
       frame:Show()
     else
       -- store previous visual props and then hide strongly
@@ -2155,11 +3029,8 @@ do
           scale = (frame.GetScale and frame:GetScale()) or 1,
         }
       end
-      if frame.SetAlpha then frame:SetAlpha(0) end
-      if frame.SetFrameStrata then frame:SetFrameStrata("LOW") end
+      -- Hide without permanently poisoning alpha/scale.
       if frame.EnableMouse then frame:EnableMouse(false) end
-       -- extra safety: shrink scale to near-zero to avoid bleed-through
-       if frame.SetScale then frame:SetScale(0.0001) end
       frame:Hide()
     end
   end
@@ -2169,7 +3040,7 @@ do
     local elems = {
       H.bars.hp, H.bars.pow, H.bars.targetHP, H.bars.targetPow,
       H.bars.combo,
-      H.potionBtn, H.hearthBtn, H.bandageBtn, H.utilRow,
+      H.potionBtn, H.manaBtn, H.hearthBtn, H.bandageBtn, H.racialBtn, H.utilRow,
       H.bars.cds,
     }
     for _, f in ipairs(elems) do applyProps(f, shown) end
@@ -2188,7 +3059,6 @@ do
   local cfg = HardcoreHUDDB.visibility
   cfg.hideWhenShown = cfg.hideWhenShown or {
     "WorldMapFrame",
-    "HardcoreHUDOptions",
     "AtlasLootDefaultFrame",
     "AtlasLoot_GUI-Frame",
     "AtlasLootFrame",
@@ -2196,7 +3066,7 @@ do
     "AtlasLootItemsFrame",
     "AtlasLoot_GUIMenu",
     "QuestLogFrame",
-    "SpellBookFrame",
+    -- "SpellBookFrame",  -- Allow HUD to show with spellbook open
     "CharacterFrame",
     "TradeSkillFrame",
     "MerchantFrame",
@@ -2241,12 +3111,46 @@ do
     _G.WorldMapFrame._HardcoreHUDHooked = true
   end
   -- Explicit hook for options window so HUD never steals clicks over it
+  -- Do not auto-hide HUD when our own options window is opened; this allows
+  -- users to see and reposition bars while adjusting settings.
+  -- Instead, when the options frame is shown, make sure it is on top and
+  -- temporarily disable HUD mouse handling so options remain fully interactive.
   if HardcoreHUDOptions and not HardcoreHUDOptions._HardcoreHUDHooked then
-    HardcoreHUDOptions:HookScript("OnShow", function()
-      SetHUDShown(false)
+    HardcoreHUDOptions:HookScript("OnShow", function(self)
+      -- Force options window to top and accept input
+      if self.SetParent then pcall(self.SetParent, self, UIParent) end
+      if self.SetFrameStrata then pcall(self.SetFrameStrata, self, "TOOLTIP") end
+      if self.SetFrameLevel then pcall(self.SetFrameLevel, self, 32767) end
+      if self.SetClampedToScreen then pcall(self.SetClampedToScreen, self, true) end
+      if self.EnableMouse then pcall(self.EnableMouse, self, true) end
+      if self.SetMovable then pcall(self.SetMovable, self, true) end
+      -- Don't hide HUD or utility buttons - just make them non-interactive
+      if H then
+        local keys = { "potionBtn", "manaBtn", "bandageBtn", "hearthBtn", "racialBtn" }
+        for _, k in ipairs(keys) do
+          local f = H[k]
+          if f and f.EnableMouse then
+            pcall(function() f:EnableMouse(false) end)
+          end
+        end
+      end
     end)
-    HardcoreHUDOptions:HookScript("OnHide", function()
-      SetHUDShown(true)
+    HardcoreHUDOptions:HookScript("OnHide", function(self)
+      -- Restore utility button mouse interaction
+      if H then
+        local keys = { "potionBtn", "manaBtn", "bandageBtn", "hearthBtn", "racialBtn" }
+        for _, k in ipairs(keys) do
+          local f = H[k]
+          if f and f.EnableMouse then
+            pcall(function() f:EnableMouse(true) end)
+          end
+        end
+      end
+      -- Restore HUD mouse behavior according to lock setting
+      if H and H.SetHUDMouseEnabled then
+        local locked = HardcoreHUDDB and HardcoreHUDDB.lock
+        pcall(H.SetHUDMouseEnabled, locked and true or false)
+      end
     end)
     HardcoreHUDOptions._HardcoreHUDHooked = true
   end
@@ -2287,8 +3191,7 @@ end
 if not H.ShowUnifiedTooltip then
   local simple = CreateFrame("Frame", "HardcoreHUDSimpleTooltip", UIParent)
   simple:SetSize(220, 60)
-  simple:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=12, insets={left=3,right=3,top=3,bottom=3} })
-  simple:SetBackdropColor(0,0,0,0.88)
+  H.SafeBackdrop(simple, { bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=12, insets={left=3,right=3,top=3,bottom=3} }, 0,0,0,0.88)
   simple.text1 = simple:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   simple.text1:SetPoint("TOPLEFT", simple, "TOPLEFT", 8, -8)
   simple.text1:SetJustifyH("LEFT")
@@ -2307,7 +3210,7 @@ if not H.ShowUnifiedTooltip then
       GameTooltip:Hide()
       GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
       local ok = false
-      local link = GetSpellLink(spellID)
+      local link = GetSpellLink and GetSpellLink(spellID) or nil
       if link then ok = pcall(function() GameTooltip:SetHyperlink(link) end) end
       if not ok then ok = pcall(function() GameTooltip:SetHyperlink("spell:"..spellID) end) end
       if not ok then
@@ -2361,7 +3264,7 @@ do
   local function FindBreath()
     for i=1, (MIRRORTIMER_NUMTIMERS or 3) do
       local name, text, value, maxvalue, scale, paused, label = GetMirrorTimerInfo(i)
-      if name and string.upper(name) == "BREATH" and maxvalue and maxvalue > 0 then
+      if type(name) == "string" and string.upper(name) == "BREATH" and maxvalue and maxvalue > 0 then
         return value, maxvalue, (paused == 1)
       end
     end
@@ -2417,8 +3320,8 @@ do
     ev:RegisterEvent("MIRROR_TIMER_STOP")
     ev:RegisterEvent("PLAYER_ENTERING_WORLD")
     ev:SetScript("OnEvent", function(_, e, name)
-      -- Normalize name
-      local nm = name and string.upper(name) or nil
+      -- Normalize name (guard non-string values)
+      local nm = (type(name) == "string") and string.upper(name) or nil
       if e == "PLAYER_ENTERING_WORLD" then
         local v,m,p = FindBreath()
         if v and m and not p and HardcoreHUDDB.breath and HardcoreHUDDB.breath.enabled then bf:Show() else bf:Hide() end
@@ -2429,4 +3332,115 @@ do
       end
     end)
   end
+end
+
+-- Thanks for Buff System (auto-thanks buff givers outside group - uses emotes instead of chat)
+function H.InitThanksBuff()
+  if H._thanksBuff then return end
+  
+  HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or {
+    enabled = true,  -- Re-enabled now that we use emotes instead of chat
+    emote = "thank",  -- Emote to send (e.g. "thank", "laugh", "wave")
+    onlyOutsideGroup = true
+  }
+  
+  local buffTracking = {}
+  local emoteQueue = {}  -- Queue for emotes to send after combat
+  
+  local function CheckBuffs()
+    if not (HardcoreHUDDB.thanksBuff and HardcoreHUDDB.thanksBuff.enabled) then return end
+    
+    local now = GetTime()
+    local inGroup = IsInGroup and IsInGroup() or false
+    
+    -- Check all buffs on player
+    local i = 1
+    while true do
+      local name, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, nameplateShowPersonal, spellId = UnitBuff("player", i)
+      if not name then break end
+      
+      if unitCaster and spellId then
+        local buffKey = spellId .. "_" .. (unitCaster or "unknown")
+        
+        -- Skip if we already thanked for this buff
+        if not buffTracking[buffKey] then
+          buffTracking[buffKey] = now
+          
+          -- Check if caster is outside group
+          if unitCaster and unitCaster ~= "" then
+            local isInGroup = false
+            if inGroup and HardcoreHUDDB.thanksBuff.onlyOutsideGroup then
+              -- Check if unitCaster is in our group
+              for j = 1, GetNumGroupMembers() do
+                if GetGroupMemberName(j) == unitCaster then
+                  isInGroup = true
+                  break
+                end
+              end
+            end
+            
+            -- Queue emote if outside group (or if onlyOutsideGroup is disabled)
+            -- Emotes will be sent after combat ends
+            if not isInGroup or not HardcoreHUDDB.thanksBuff.onlyOutsideGroup then
+              table.insert(emoteQueue, HardcoreHUDDB.thanksBuff.emote)
+            end
+          end
+        end
+      end
+      
+      i = i + 1
+    end
+    
+    -- Clean up old buff tracking (keep for 10 minutes)
+    for key, time in pairs(buffTracking) do
+      if now - time > 600 then
+        buffTracking[key] = nil
+      end
+    end
+  end
+  
+  -- Create update frame
+  local uf = CreateFrame("Frame")
+  H._thanksBuff = uf
+  local acc = 0
+  local inCombat = false
+  local msgCheckDelay = 0
+  uf:SetScript("OnUpdate", function(_, dt)
+    acc = acc + dt
+    if acc >= 1.0 then  -- Check once per second
+      acc = 0
+      CheckBuffs()
+      
+      -- Track when we leave combat
+      local nowInCombat = InCombatLockdown()
+      if inCombat and not nowInCombat then
+        -- Just left combat, set flag to process messages after a delay
+        msgCheckDelay = 2.0  -- Wait 2 seconds for secure context to completely clear
+      end
+      inCombat = nowInCombat
+    end
+    
+    -- Process queued emotes with delay after leaving combat
+    if msgCheckDelay and msgCheckDelay > 0 then
+      msgCheckDelay = msgCheckDelay - dt
+      if msgCheckDelay <= 0 then
+        msgCheckDelay = nil
+        -- Send emotes one at a time with 500ms between them
+        if #emoteQueue > 0 and not InCombatLockdown() then
+          local emote = table.remove(emoteQueue, 1)
+          if emote then
+            pcall(DoEmote, emote)
+          end
+          -- Schedule next emote check
+          if #emoteQueue > 0 then
+            msgCheckDelay = 0.5  -- Wait 500ms before next emote
+          end
+        end
+      end
+    end
+  end)
+  uf:RegisterEvent("PLAYER_LOGIN")
+  uf:SetScript("OnEvent", function()
+    buffTracking = {}  -- Reset on login
+  end)
 end
