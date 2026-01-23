@@ -1867,6 +1867,89 @@ do
   end
 end
 
+-- ============================================================================
+-- LOCALIZATION-SAFE SPELL ID TABLES (Classic Era 1.15.x)
+-- Using Spell IDs instead of names for multi-language support (DE, FR, etc.)
+-- ============================================================================
+local CLASS_BUFF_SPELLS = {
+  -- PALADIN
+  RIGHTEOUS_FURY       = 25780,  -- Rank 1 (only rank in Classic)
+  BLESSING_OF_KINGS    = 20217,  -- Rank 1
+  BLESSING_OF_SANCTUARY = 20911, -- Rank 1
+  BLESSING_OF_MIGHT    = 19740,  -- Rank 1
+  BLESSING_OF_WISDOM   = 19742,  -- Rank 1
+  -- PRIEST
+  POWER_WORD_FORTITUDE = 1243,   -- Rank 1
+  INNER_FIRE           = 588,    -- Rank 1
+  DIVINE_SPIRIT        = 14752,  -- Rank 1
+  SHADOW_PROTECTION    = 976,    -- Rank 1
+  -- DRUID
+  MARK_OF_THE_WILD     = 1126,   -- Rank 1
+  GIFT_OF_THE_WILD     = 21849,  -- Rank 1
+  THORNS               = 467,    -- Rank 1
+  -- MAGE
+  ARCANE_INTELLECT     = 1459,   -- Rank 1
+  MAGE_ARMOR           = 6117,   -- Rank 1
+  ICE_ARMOR            = 7302,   -- Rank 1
+  FROST_ARMOR          = 168,    -- Rank 1
+  -- WARRIOR
+  BATTLE_SHOUT         = 6673,   -- Rank 1
+  -- SHAMAN
+  LIGHTNING_SHIELD     = 324,    -- Rank 1
+  WATER_SHIELD         = 24398,  -- (TBC+ but safe)
+  -- WARLOCK
+  DEMON_ARMOR          = 706,    -- Rank 1
+  FEL_ARMOR            = 28176,  -- (TBC+ but safe)
+  -- HUNTER
+  ASPECT_OF_THE_HAWK   = 13165,  -- Rank 1
+  ASPECT_OF_THE_MONKEY = 13163,
+  -- ROGUE (no self-buffs typically)
+}
+
+-- Helper: Check if player has a buff by spell ID (works with any locale)
+local function PlayerHasBuffBySpellID(spellID)
+  if not spellID then return false end
+  -- Get the localized name from the spell ID
+  local spellName = GetSpellInfo and GetSpellInfo(spellID)
+  if not spellName then return false end
+  -- Check all player buffs
+  for i = 1, 40 do
+    local buffName = UnitBuff("player", i)
+    if not buffName then break end
+    if buffName == spellName then return true end
+  end
+  return false
+end
+
+-- Helper: Check if player has ANY of a list of spell IDs as a buff
+local function PlayerHasAnyBuffBySpellIDs(spellIDs)
+  if not spellIDs then return false end
+  for _, id in ipairs(spellIDs) do
+    if PlayerHasBuffBySpellID(id) then return true end
+  end
+  return false
+end
+
+-- Helper: Check if player knows a spell by ID
+local function IsSpellKnownByID(spellID)
+  if not spellID then return false end
+  if IsSpellKnown and IsSpellKnown(spellID) then return true end
+  if IsPlayerSpell and IsPlayerSpell(spellID) then return true end
+  -- Fallback: check spellbook by localized name
+  local spellName = GetSpellInfo and GetSpellInfo(spellID)
+  if spellName and GetSpellBookItemName then
+    local i = 1
+    while true do
+      local name = GetSpellBookItemName(i, BOOKTYPE_SPELL)
+      if not name then break end
+      if string.find(name, spellName, 1, true) then return true end
+      i = i + 1
+      if i > 300 then break end
+    end
+  end
+  return false
+end
+
 local function PlayerBuffNames()
   local present = {}
   for i=1,40 do
@@ -2108,9 +2191,14 @@ function H.InitReminders()
   end
 
     local function UpdateReminders()
-    if not HardcoreHUDDB.reminders.enabled then rf:Hide(); return end
+    -- Combat-safe: skip visibility changes during combat to avoid taint
+    local inCombat = InCombatLockdown()
+    if not HardcoreHUDDB.reminders.enabled then
+      if not inCombat then pcall(function() rf:Hide() end) end
+      return
+    end
       -- Safety: keep frame hidden until we know we have entries
-      rf:Hide()
+      if not inCombat then pcall(function() rf:Hide() end) end
 
     -- Build actionable entries (items and self-buffs)
     local entries = {}
@@ -2365,6 +2453,19 @@ function H.InitReminders()
     end
 
     -- Class self-buffs buttons (show only when missing and category enabled)
+    -- NEW: Support both spell names (legacy) and spell IDs (localization-safe)
+    local function AddSpellByID(spellID)
+        if not spellID then return end
+        -- Check if spell is known
+        if not IsSpellKnownByID(spellID) then return end
+        
+        local name, _, tex = GetSpellInfo and GetSpellInfo(spellID)
+        if not name then return end -- Spell doesn't exist
+        if (not tex or tex == "") and GetSpellTexture then tex = GetSpellTexture(spellID) end
+        if not tex or tex == "" then tex = "Interface/Icons/INV_Misc_QuestionMark" end
+        table.insert(entries, {kind="spell", spell=name, texture=tex, label=name, spellID=spellID})
+    end
+
     local function AddSpellIfKnown(spellName)
         -- CRITICAL: Only add the button if the player has actually learned this spell
         if not IsSpellLearned(spellName) then return end
@@ -2385,30 +2486,45 @@ function H.InitReminders()
     local class = select(2, UnitClass("player"))
     local coreAdded = 0
     local presentAll = PlayerBuffNames()
+    
+    -- NEW: Localization-safe buff detection using Spell IDs
     local function HasAnyCoreBuffForClass(class, present)
-      local function has(pat)
-        return PresentHasAnyPattern(present, pat)
-      end
       if class == "PALADIN" then
-        return has("Righteous Fury") or has("Blessing of Sanctuary") or has("Blessing of Kings")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.RIGHTEOUS_FURY) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_SANCTUARY) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_KINGS)
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_MIGHT)
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_WISDOM)
       elseif class == "PRIEST" then
-        return has("Power Word: Fortitude") or has("Inner Fire") or has("Divine Spirit") or has("Göttlicher Wille")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.INNER_FIRE) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT)
       elseif class == "DRUID" then
-        return has("Mark of the Wild") or has("Gift of the Wild") or has("Thorns")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MARK_OF_THE_WILD) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.GIFT_OF_THE_WILD) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.THORNS)
       elseif class == "MAGE" then
-        return has("Arcane Intellect") or has("Mage Armor") or has("Ice Armor") or has("Frost Armor")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MAGE_ARMOR) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ICE_ARMOR) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.FROST_ARMOR)
       elseif class == "WARRIOR" then
-        return has("Battle Shout")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BATTLE_SHOUT)
       elseif class == "SHAMAN" then
-        return has("Water Shield") or has("Lightning Shield")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.WATER_SHIELD) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.LIGHTNING_SHIELD)
       elseif class == "WARLOCK" then
-        return has("Fel Armor") or has("Demon Armor")
+        return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.FEL_ARMOR) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DEMON_ARMOR)
       end
       return false
     end
+    
+    -- PALADIN buffs (ID-based)
     if class == "PALADIN" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Righteous Fury") then AddSpellIfKnown("Righteous Fury"); coreAdded = coreAdded + 1 end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.RIGHTEOUS_FURY) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.RIGHTEOUS_FURY); coreAdded = coreAdded + 1 
+      end
       -- Only suggest ONE Paladin blessing at a time: Sanctuary for Prot, Kings otherwise
       local function DominantTree()
         if not GetTalentTabInfo then return 1 end
@@ -2421,64 +2537,104 @@ function H.InitReminders()
       end
       local tree = DominantTree()
       if tree == 2 then
-        if not PresentHasAnyPattern(present, "Blessing of Sanctuary") then
-          AddSpellIfKnown("Blessing of Sanctuary"); coreAdded = coreAdded + 1
+        if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_SANCTUARY) then
+          AddSpellByID(CLASS_BUFF_SPELLS.BLESSING_OF_SANCTUARY); coreAdded = coreAdded + 1
         end
       else
-        -- If Sanctuary is already active, do NOT suggest Kings (solo cannot stack)
-        local hasSanctuary = PresentHasAnyPattern(present, "Blessing of Sanctuary")
-        if not hasSanctuary and not PresentHasAnyPattern(present, "Blessing of Kings") then
-          AddSpellIfKnown("Blessing of Kings"); coreAdded = coreAdded + 1
+        local hasSanctuary = PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_SANCTUARY)
+        if not hasSanctuary and not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_KINGS) then
+          AddSpellByID(CLASS_BUFF_SPELLS.BLESSING_OF_KINGS); coreAdded = coreAdded + 1
         end
       end
+    -- PRIEST buffs (ID-based)
     elseif class == "PRIEST" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Power Word: Fortitude") then AddSpellIfKnown("Power Word: Fortitude"); coreAdded = coreAdded + 1 end
-      if not PresentHasAnyPattern(present, "Inner Fire") then AddSpellIfKnown("Inner Fire"); coreAdded = coreAdded + 1 end
-      if not PresentHasAnyPattern(present, "Divine Spirit") and not PresentHasAnyPattern(present, "Göttlicher Wille") then AddSpellIfKnown("Divine Spirit"); coreAdded = coreAdded + 1 end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE); coreAdded = coreAdded + 1 
+      end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.INNER_FIRE) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.INNER_FIRE); coreAdded = coreAdded + 1 
+      end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT); coreAdded = coreAdded + 1 
+      end
+    -- DRUID buffs (ID-based)
     elseif class == "DRUID" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Mark of the Wild") and not PresentHasAnyPattern(present, "Gift of the Wild") then AddSpellIfKnown("Mark of the Wild"); coreAdded = coreAdded + 1 end
-      if not PresentHasAnyPattern(present, "Thorns") then AddSpellIfKnown("Thorns"); coreAdded = coreAdded + 1 end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MARK_OF_THE_WILD) 
+         and not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.GIFT_OF_THE_WILD) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.MARK_OF_THE_WILD); coreAdded = coreAdded + 1 
+      end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.THORNS) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.THORNS); coreAdded = coreAdded + 1 
+      end
+    -- MAGE buffs (ID-based)
     elseif class == "MAGE" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Arcane Intellect") then AddSpellIfKnown("Arcane Intellect"); coreAdded = coreAdded + 1 end
-      if not PresentHasAnyPattern(present, "Mage Armor") and not PresentHasAnyPattern(present, "Ice Armor") and not PresentHasAnyPattern(present, "Frost Armor")
-         and not PresentHasAnyPattern(present, "Magierüstung") and not PresentHasAnyPattern(present, "Eisrüstung") and not PresentHasAnyPattern(present, "Frostrüstung") then
-        if GetSpellInfo("Mage Armor") then
-          AddSpellIfKnown("Mage Armor"); coreAdded = coreAdded + 1
-        elseif GetSpellInfo("Ice Armor") then
-          AddSpellIfKnown("Ice Armor"); coreAdded = coreAdded + 1
-        elseif GetSpellInfo("Frost Armor") then
-          AddSpellIfKnown("Frost Armor"); coreAdded = coreAdded + 1
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT); coreAdded = coreAdded + 1 
+      end
+      local hasArmor = PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MAGE_ARMOR) 
+                    or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ICE_ARMOR) 
+                    or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.FROST_ARMOR)
+      if not hasArmor then
+        -- Prefer Mage Armor > Ice Armor > Frost Armor
+        if IsSpellKnownByID(CLASS_BUFF_SPELLS.MAGE_ARMOR) then
+          AddSpellByID(CLASS_BUFF_SPELLS.MAGE_ARMOR); coreAdded = coreAdded + 1
+        elseif IsSpellKnownByID(CLASS_BUFF_SPELLS.ICE_ARMOR) then
+          AddSpellByID(CLASS_BUFF_SPELLS.ICE_ARMOR); coreAdded = coreAdded + 1
+        elseif IsSpellKnownByID(CLASS_BUFF_SPELLS.FROST_ARMOR) then
+          AddSpellByID(CLASS_BUFF_SPELLS.FROST_ARMOR); coreAdded = coreAdded + 1
         end
       end
+    -- WARRIOR buffs (ID-based)
     elseif class == "WARRIOR" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Battle Shout") then AddSpellIfKnown("Battle Shout"); coreAdded = coreAdded + 1 end
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BATTLE_SHOUT) then 
+        AddSpellByID(CLASS_BUFF_SPELLS.BATTLE_SHOUT); coreAdded = coreAdded + 1 
+      end
+    -- SHAMAN buffs (ID-based)
     elseif class == "SHAMAN" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Water Shield") and not PresentHasAnyPattern(present, "Lightning Shield") then AddSpellIfKnown("Water Shield"); coreAdded = coreAdded + 1 end
+      local hasShield = PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.WATER_SHIELD) 
+                     or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.LIGHTNING_SHIELD)
+      if not hasShield then 
+        -- Prefer Water Shield if known, otherwise Lightning Shield
+        if IsSpellKnownByID(CLASS_BUFF_SPELLS.WATER_SHIELD) then
+          AddSpellByID(CLASS_BUFF_SPELLS.WATER_SHIELD); coreAdded = coreAdded + 1
+        else
+          AddSpellByID(CLASS_BUFF_SPELLS.LIGHTNING_SHIELD); coreAdded = coreAdded + 1
+        end
+      end
+    -- WARLOCK buffs (ID-based)
     elseif class == "WARLOCK" and (cats.survival ~= false) then
-      local present = PlayerBuffNames()
-      if not PresentHasAnyPattern(present, "Fel Armor") and not PresentHasAnyPattern(present, "Demon Armor") then AddSpellIfKnown("Demon Armor"); coreAdded = coreAdded + 1 end
+      local hasArmor = PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.FEL_ARMOR) 
+                    or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DEMON_ARMOR)
+      if not hasArmor then 
+        -- Prefer Fel Armor if known, otherwise Demon Armor
+        if IsSpellKnownByID(CLASS_BUFF_SPELLS.FEL_ARMOR) then
+          AddSpellByID(CLASS_BUFF_SPELLS.FEL_ARMOR); coreAdded = coreAdded + 1
+        else
+          AddSpellByID(CLASS_BUFF_SPELLS.DEMON_ARMOR); coreAdded = coreAdded + 1
+        end
+      end
     end
-    -- Fallback: if detection found none, show canonical core buff buttons so user can apply them
+    
+    -- Fallback: if detection found none, show canonical core buff buttons
     if (cats.survival ~= false) and coreAdded == 0 and not HasAnyCoreBuffForClass(class, presentAll) then
       if class == "PALADIN" then
-        AddSpellIfKnown("Righteous Fury"); AddSpellIfKnown("Blessing of Kings")
+        AddSpellByID(CLASS_BUFF_SPELLS.RIGHTEOUS_FURY)
+        AddSpellByID(CLASS_BUFF_SPELLS.BLESSING_OF_KINGS)
       elseif class == "PRIEST" then
-        AddSpellIfKnown("Power Word: Fortitude"); AddSpellIfKnown("Inner Fire")
+        AddSpellByID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE)
+        AddSpellByID(CLASS_BUFF_SPELLS.INNER_FIRE)
       elseif class == "DRUID" then
-        AddSpellIfKnown("Mark of the Wild"); AddSpellIfKnown("Thorns")
+        AddSpellByID(CLASS_BUFF_SPELLS.MARK_OF_THE_WILD)
+        AddSpellByID(CLASS_BUFF_SPELLS.THORNS)
       elseif class == "MAGE" then
-        AddSpellIfKnown("Arcane Intellect"); AddSpellIfKnown("Mage Armor")
+        AddSpellByID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT)
+        AddSpellByID(CLASS_BUFF_SPELLS.MAGE_ARMOR)
       elseif class == "WARRIOR" then
-        AddSpellIfKnown("Battle Shout")
+        AddSpellByID(CLASS_BUFF_SPELLS.BATTLE_SHOUT)
       elseif class == "SHAMAN" then
-        AddSpellIfKnown("Water Shield")
+        AddSpellByID(CLASS_BUFF_SPELLS.LIGHTNING_SHIELD)
       elseif class == "WARLOCK" then
-        AddSpellIfKnown("Demon Armor")
+        AddSpellByID(CLASS_BUFF_SPELLS.DEMON_ARMOR)
       end
     end
 
@@ -2588,6 +2744,8 @@ function H.InitReminders()
       end
       b.icon:SetTexture(resolvedTex)
       H.QueueSetAttribute(b, "type", "spell"); H.QueueSetAttribute(b, "spell", name)
+      -- Always target self for reminder buffs, regardless of current target
+      H.QueueSetAttribute(b, "unit", "player")
       b.count:SetText("")
     end
 
@@ -2604,16 +2762,21 @@ function H.InitReminders()
         local b = ensure(shown)
         place(b, shown)
         if e.kind == "item" then setItem(b, e.id, e.texture) else setSpell(b, e.spell, e.texture) end
-        b:Show()
+        if not InCombatLockdown() then pcall(function() b:Show() end) end
       end
     end
-    -- hide the rest
-    for i=shown+1,(rf.btns and #rf.btns or 0) do if rf.btns[i] then rf.btns[i]:Hide() end end
+    -- hide the rest (combat-safe)
+    if not InCombatLockdown() then
+      for i=shown+1,(rf.btns and #rf.btns or 0) do if rf.btns[i] then pcall(function() rf.btns[i]:Hide() end) end end
+    end
 
     -- Resize frame to fit buttons; hide if no entries
     if shown == 0 then
-      if rf.btns then for i=1,#rf.btns do rf.btns[i]:Hide() end end
-      rf:Hide(); return
+      if not InCombatLockdown() and rf.btns then
+        for i=1,#rf.btns do pcall(function() rf.btns[i]:Hide() end) end
+      end
+      if not InCombatLockdown() then pcall(function() rf:Hide() end) end
+      return
     end
     -- otherwise layout and show
     local rows = math.max(1, math.ceil(shown/cols))
@@ -2621,8 +2784,8 @@ function H.InitReminders()
     local h = 16 + rows*(size+pad) - pad
     rf:SetSize(w, h)
     rf.text:SetText("")
-    -- Ensure the reminder frame is shown when there are actionable entries
-    if not rf:IsShown() then rf:Show() end
+    -- Ensure the reminder frame is shown when there are actionable entries (combat-safe)
+    if not rf:IsShown() and not InCombatLockdown() then pcall(function() rf:Show() end) end
     if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.reminders then
       local miss = MissingCategories(); DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Missing: "..table.concat(miss, ", "))
     end
@@ -3370,12 +3533,18 @@ function H.InitThanksBuff()
           if unitCaster and unitCaster ~= "" then
             local isInGroup = false
             if inGroup and HardcoreHUDDB.thanksBuff.onlyOutsideGroup then
-              -- Check if unitCaster is in our group
-              for j = 1, GetNumGroupMembers() do
-                if GetGroupMemberName(j) == unitCaster then
+              -- Check if unitCaster is in our group (Classic API)
+              local numMembers = GetNumGroupMembers and GetNumGroupMembers() or 0
+              for j = 1, numMembers do
+                local unit = IsInRaid() and ("raid"..j) or ("party"..j)
+                if UnitExists(unit) and UnitIsUnit(unit, unitCaster) then
                   isInGroup = true
                   break
                 end
+              end
+              -- Also check if it's self-cast
+              if UnitIsUnit("player", unitCaster) then
+                isInGroup = true
               end
             end
             

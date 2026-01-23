@@ -136,23 +136,31 @@ function H.BuildWarnings()
   end)
   leashFrame:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
-    local _, _, _, x, y = self:GetPoint()
+    -- Calculate position relative to screen center for consistent saving
+    local cx, cy = self:GetCenter()
+    local px, py = UIParent:GetCenter()
+    local x = cx - px
+    local y = cy - py
     HardcoreHUDDB.warnings.leash.pos = { x = x, y = y }
+    -- Reanchor to CENTER with saved offset
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", UIParent, "CENTER", x, y)
   end)
   
-  -- Title text
+  -- Title text (hidden by default, shown only when unlocked for dragging)
   local leashTitle = leashFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   leashTitle:SetPoint("TOP", leashFrame, "TOP", 0, -5)
   leashTitle:SetText("LEASH TRACKING")
   leashTitle:SetTextColor(1, 0.8, 0, 1)
   if STANDARD_TEXT_FONT then leashTitle:SetFont(STANDARD_TEXT_FONT, 18, "OUTLINE") end
+  leashTitle:Hide()  -- Hidden by default
   leashFrame.title = leashTitle
   
-  -- Progress bar
+  -- Progress bar (anchor to frame top when title is hidden)
   local leashBar = CreateFrame("StatusBar", nil, leashFrame)
   leashBar:SetSize(300, 16)
-  leashBar:SetPoint("TOP", leashTitle, "BOTTOM", 0, -8)
-  leashBar:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
+  leashBar:SetPoint("TOP", leashFrame, "TOP", 0, -5)  -- Anchor to frame, not title
+  leashBar:SetStatusBarTexture("Interface/Buttons/WHITE8x8")
   leashBar:SetMinMaxValues(0, 100)
   leashBar:SetValue(50)
   leashBar:SetStatusBarColor(1, 0.5, 0, 1) -- Orange default
@@ -162,19 +170,36 @@ function H.BuildWarnings()
   barBg:SetAllPoints(leashBar)
   barBg:SetColorTexture(0.1, 0.1, 0.1, 0.8)
   
-  -- Bar border
-  local barBorder = leashBar:CreateTexture(nil, "OVERLAY")
-  barBorder:SetAllPoints(leashBar)
-  barBorder:SetTexture("Interface/Tooltips/UI-Tooltip-Border")
-  barBorder:SetVertexColor(1, 1, 1, 0.5)
+  -- Clean thin border (1px lines)
+  local borderSize = 1
+  local borderColor = {0.4, 0.4, 0.4, 1}
+  local borders = {}
+  borders[1] = leashBar:CreateTexture(nil, "OVERLAY")
+  borders[1]:SetPoint("TOPLEFT", leashBar, "TOPLEFT", 0, 0)
+  borders[1]:SetPoint("TOPRIGHT", leashBar, "TOPRIGHT", 0, 0)
+  borders[1]:SetHeight(borderSize)
+  borders[1]:SetColorTexture(unpack(borderColor))
+  borders[2] = leashBar:CreateTexture(nil, "OVERLAY")
+  borders[2]:SetPoint("BOTTOMLEFT", leashBar, "BOTTOMLEFT", 0, 0)
+  borders[2]:SetPoint("BOTTOMRIGHT", leashBar, "BOTTOMRIGHT", 0, 0)
+  borders[2]:SetHeight(borderSize)
+  borders[2]:SetColorTexture(unpack(borderColor))
+  borders[3] = leashBar:CreateTexture(nil, "OVERLAY")
+  borders[3]:SetPoint("TOPLEFT", leashBar, "TOPLEFT", 0, 0)
+  borders[3]:SetPoint("BOTTOMLEFT", leashBar, "BOTTOMLEFT", 0, 0)
+  borders[3]:SetWidth(borderSize)
+  borders[3]:SetColorTexture(unpack(borderColor))
+  borders[4] = leashBar:CreateTexture(nil, "OVERLAY")
+  borders[4]:SetPoint("TOPRIGHT", leashBar, "TOPRIGHT", 0, 0)
+  borders[4]:SetPoint("BOTTOMRIGHT", leashBar, "BOTTOMRIGHT", 0, 0)
+  borders[4]:SetWidth(borderSize)
+  borders[4]:SetColorTexture(unpack(borderColor))
   
   leashFrame.bar = leashBar
   
   -- Stats text (distance + time)
   local leashStats = leashFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   leashStats:SetPoint("TOP", leashBar, "BOTTOM", 0, -6)
-  leashStats:SetText("31m / 31m | 11s")
-  leashStats:SetTextColor(1, 1, 1, 1)
   leashFrame.stats = leashStats
   
   -- Leash icon
@@ -209,8 +234,13 @@ function H.BuildWarnings()
   end)
   rangeFrame:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
-    local _, _, _, x, y = self:GetPoint()
+    local cx, cy = self:GetCenter()
+    local px, py = UIParent:GetCenter()
+    local x = cx - px
+    local y = cy - py
     HardcoreHUDDB.warnings.rangeDisplay.pos = { x = x, y = y }
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", UIParent, "CENTER", x, y)
   end)
   
   -- Range text (big display) - NO BACKGROUND
@@ -250,6 +280,12 @@ function H.ShowCriticalHPWarning()
   if HardcoreHUDDB.warnings and HardcoreHUDDB.warnings.enabled ~= false and HardcoreHUDDB.warnings.criticalHP then
     -- Suppress critical HP warning when dead or a ghost
     if (UnitIsDead and UnitIsDead("player")) or (UnitIsGhost and UnitIsGhost("player")) then
+      H.HideCriticalHPWarning()
+      return
+    end
+    
+    -- Suppress critical HP warning outside of combat
+    if not InCombatLockdown or not InCombatLockdown() then
       H.HideCriticalHPWarning()
       return
     end
@@ -743,64 +779,97 @@ end
 -- Initialize leash state tracking
 H._leashState = H._leashState or {
   targetGUID = nil,
-  baseDistance = 31,     -- 31m base leash distance
-  hitDistance = 0,       -- Additional distance from hits during chase
-  lastHitTime = 0,       -- Time of last damaging hit
-  timerStartTime = 0,    -- When 11-second countdown started
-  timerActive = false,   -- Is timer counting down?
+  startPosition = nil,   -- {x, y} where combat started
+  lastHitTime = 0,       -- Time of last damaging hit on target
+  combatStartTime = 0,   -- When combat started (timer starts here)
+  timerDuration = 12,    -- Leash timer resets to 12 seconds on hit
+  active = false,
 }
 
 -- COMBAT_LOG hook for tracking hits and resetting timer
-local function OnCombatLogEvent(...)
-  local timestamp, eventType, _, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags, spellID, spellName, spellSchool, amount, overkill, school, resisted, blocked, absorbed, critical, glancing, crushing, isOffHand = ...
+local function OnCombatLogEvent()
+  -- Classic Era uses CombatLogGetCurrentEventInfo()
+  local timestamp, eventType, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags,
+        destGUID, destName, destFlags, destRaidFlags = CombatLogGetCurrentEventInfo()
   
-  -- Only track events where player hits target
+  -- Only track events where player hits their current target
   local playerGUID = UnitGUID("player")
+  local targetGUID = UnitGUID("target")
+  
+  if not playerGUID or not targetGUID then return end
   if sourceGUID ~= playerGUID then return end
-  if destGUID ~= (UnitGUID("target") or nil) then return end
+  if destGUID ~= targetGUID then return end
   
-  -- Filter out DoTs and non-damage events
-  local isDoT = (eventType == "SPELL_PERIODIC_DAMAGE")
-  if isDoT then return end
-  
-  -- Valid hit events: SPELL_DAMAGE, SWING_DAMAGE, RANGE_DAMAGE, etc
+  -- Valid hit events that should reset the leash timer
   local validEvents = {
     SPELL_DAMAGE = true,
     SWING_DAMAGE = true,
     RANGE_DAMAGE = true,
-    SPELL_BUILDING = true,
-    SPELL_EXTRA_ATTACKS = true,
+    SPELL_PERIODIC_DAMAGE = true,  -- DoTs count too for leash
+    SPELL_BUILDING_DAMAGE = true,
   }
   
   if not validEvents[eventType] then return end
   
-  -- Only count if dealing damage
-  if not amount or amount == 0 then return end
+  -- Reset the leash timer on successful hit
+  local now = GetTime()
+  H._leashState.lastHitTime = now
+  H._leashState.targetGUID = targetGUID
   
-  -- Reset the 11-second timer
-  H._leashState.lastHitTime = GetTime()
-  H._leashState.timerActive = true
-  H._leashState.timerStartTime = GetTime()
-  
-  -- Track distance increase for this hit
-  local px, py = UnitPosition("player")
-  local tx, ty = UnitPosition("target")
-  if px and tx then
-    local dx = tx - px
-    local dy = ty - py
-    local hitDistance = math.sqrt(dx*dx + dy*dy)
-    -- If hitting from range > 10m, it counts as "hit during chase"
-    if hitDistance > 10 then
-      H._leashState.hitDistance = H._leashState.hitDistance + 2  -- Each hit adds ~2m
-    end
+  -- Debug output
+  if HardcoreHUDDB.debug then
+    print(string.format("[HardcoreHUD] Leash timer reset: hit %s with %s", destName or "target", eventType))
   end
 end
 
 -- Register combat log event
-local combatLogFrame = CreateFrame("Frame")
-combatLogFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-combatLogFrame:SetScript("OnEvent", function(self, event, ...)
-  OnCombatLogEvent(...)
+local leashCombatLogFrame = CreateFrame("Frame")
+leashCombatLogFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+leashCombatLogFrame:SetScript("OnEvent", function(self, event)
+  if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+    OnCombatLogEvent()
+  end
+end)
+
+-- Reset leash state when target changes or combat ends
+local leashResetFrame = CreateFrame("Frame")
+leashResetFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+leashResetFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+leashResetFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+leashResetFrame:SetScript("OnEvent", function(self, event)
+  if event == "PLAYER_REGEN_DISABLED" then
+    -- Combat started! Start the timer NOW
+    local now = GetTime()
+    H._leashState.active = true
+    H._leashState.combatStartTime = now
+    H._leashState.lastHitTime = now  -- Initialize to combat start
+    H._leashState.targetGUID = UnitGUID("target")
+    -- Store start position
+    local px, py = UnitPosition("player")
+    if px and py then
+      H._leashState.startPosition = { x = px, y = py }
+    end
+    if HardcoreHUDDB.debug then
+      print("[HardcoreHUD] Combat started - Leash timer started!")
+    end
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    -- Combat ended, reset everything
+    H._leashState.active = false
+    H._leashState.targetGUID = nil
+    H._leashState.startPosition = nil
+    H._leashState.lastHitTime = 0
+    H._leashState.combatStartTime = 0
+    if H.leashWarn then H.leashWarn:Hide() end
+  elseif event == "PLAYER_TARGET_CHANGED" then
+    -- New target, reset start position but keep timer running
+    H._leashState.startPosition = nil
+    H._leashState.targetGUID = UnitGUID("target")
+    -- Get new start position from current location
+    local px, py = UnitPosition("player")
+    if px and py then
+      H._leashState.startPosition = { x = px, y = py }
+    end
+  end
 end)
 
 function H.CheckLeashDistance()
@@ -834,26 +903,43 @@ function H.CheckLeashDistance()
   if H.leashWarn then
     H.leashWarn:Show()
     
-    -- Get leash distance (default 50 yards)
-    local leashDist = HardcoreHUDDB.warnings.leash.distance or 50
+    -- Get configured leash distance (default 50 yards)
+    local maxLeashDist = HardcoreHUDDB.warnings.leash.distance or 50
     
-    -- Calculate time in combat
-    local combatTime = math.max(0, (GetTime() - (H._combatStartTime or GetTime())))
+    -- Calculate distance from start position (where combat/pull started)
+    local currentDistance = 0
+    local px, py = UnitPosition("player")
+    if px and py and H._leashState.startPosition then
+      local sx, sy = H._leashState.startPosition.x, H._leashState.startPosition.y
+      local dx = px - sx
+      local dy = py - sy
+      currentDistance = math.sqrt(dx*dx + dy*dy)
+    end
     
-    -- Update bar (simulate distance from combat start point)
+    -- Calculate time since last hit
+    local now = GetTime()
+    local timeSinceHit = now - (H._leashState.lastHitTime or now)
+    local timerRemaining = math.max(0, H._leashState.timerDuration - timeSinceHit)
+    
+    -- If no hit recorded yet, show full timer
+    if H._leashState.lastHitTime == 0 then
+      timerRemaining = H._leashState.timerDuration
+    end
+    
+    -- Update bar
     if H.leashWarn.bar then
-      H.leashWarn.bar:SetMinMaxValues(0, leashDist)
+      H.leashWarn.bar:SetMinMaxValues(0, maxLeashDist)
+      H.leashWarn.bar:SetValue(math.min(currentDistance, maxLeashDist))
       
-      -- Distance increases over time (simulate movement speed)
-      local distance = math.min(leashDist, combatTime * 5)  -- 5 yards per second
-      H.leashWarn.bar:SetValue(distance)
+      -- Color based on danger level
+      local distRatio = currentDistance / maxLeashDist
+      local timeRatio = timerRemaining / H._leashState.timerDuration
+      local danger = math.max(distRatio, 1 - timeRatio)  -- Whichever is more dangerous
       
-      -- Color: green to yellow to red as distance increases
-      local ratio = distance / leashDist
       local r, g, b
-      if ratio < 0.5 then
+      if danger < 0.5 then
         r, g, b = 0, 1, 0  -- Green: safe
-      elseif ratio < 0.8 then
+      elseif danger < 0.8 then
         r, g, b = 1, 1, 0  -- Yellow: caution
       else
         r, g, b = 1, 0, 0  -- Red: danger
@@ -861,10 +947,26 @@ function H.CheckLeashDistance()
       H.leashWarn.bar:SetStatusBarColor(r, g, b)
     end
     
-    -- Update stats text: distance / max distance | combat time
+    -- Update stats text: distance / max | timer
     if H.leashWarn.stats then
-      local distance = math.min(leashDist, combatTime * 5)
-      H.leashWarn.stats:SetText(string.format("%.1f / %d yd  |  %.1fs", distance, leashDist, combatTime))
+      local timerText
+      if timerRemaining > 0 then
+        timerText = string.format("%.1fs", timerRemaining)
+      else
+        timerText = "EXPIRED!"
+      end
+      H.leashWarn.stats:SetText(string.format("%.1f / %d yd  |  %s", currentDistance, maxLeashDist, timerText))
+    end
+    
+    -- Play warning sound when timer is about to expire
+    if timerRemaining <= 3 and timerRemaining > 0 and HardcoreHUDDB.warnings.leash.sound then
+      -- Only play once per second
+      if not H._leashSoundTime or (now - H._leashSoundTime) > 1 then
+        H._leashSoundTime = now
+        if PlaySoundFile then
+          PlaySoundFile("Sound/Interface/RaidWarning.wav", "Master")
+        end
+      end
     end
   end
 end
@@ -877,7 +979,12 @@ function H.ShowLeashTest()
   H._leashTestMode = true
   
   H.leashWarn:Show()
+  -- Show title when in test/unlock mode
+  if H.leashWarn.title then H.leashWarn.title:Show() end
+  -- Reposition bar below title when title is shown
   if H.leashWarn.bar then
+    H.leashWarn.bar:ClearAllPoints()
+    H.leashWarn.bar:SetPoint("TOP", H.leashWarn.title, "BOTTOM", 0, -8)
     H.leashWarn.bar:SetValue(65)
     H.leashWarn.bar:SetStatusBarColor(1, 0.5, 0, 1)
   end
@@ -891,6 +998,12 @@ function H.ShowLeashTest()
   end
   H._leashTestTimer = C_Timer.NewTimer(10, function()
     H._leashTestMode = false
+    -- Hide title and reposition bar
+    if H.leashWarn and H.leashWarn.title then H.leashWarn.title:Hide() end
+    if H.leashWarn and H.leashWarn.bar then
+      H.leashWarn.bar:ClearAllPoints()
+      H.leashWarn.bar:SetPoint("TOP", H.leashWarn, "TOP", 0, -5)
+    end
     if H.leashWarn and not HardcoreHUDDB.warnings.leash.locked then
       H.leashWarn:Hide()
     end
@@ -909,6 +1022,12 @@ function H.HideLeashTest()
   end
   
   H._leashTestMode = false
+  -- Hide title and reposition bar for normal mode
+  if H.leashWarn.title then H.leashWarn.title:Hide() end
+  if H.leashWarn.bar then
+    H.leashWarn.bar:ClearAllPoints()
+    H.leashWarn.bar:SetPoint("TOP", H.leashWarn, "TOP", 0, -5)
+  end
   H.leashWarn:Hide()
 end
 
@@ -1116,12 +1235,22 @@ function H.CheckDangerousDebuffs()
     i = i + 1
   end
   
-  -- Check for falling damage warning
+  -- Check for breath/fatigue warnings (drowning, fatigue zone)
   if HardcoreHUDDB.gtfo.fallAlert then
-    local fallName, fallTime = GetMirrorTimerInfo(2)  -- MIRROR_TIMER_FALL (2): returns (name, currentTime, maxTime, ...)
-    if fallName and fallName ~= "" and fallTime and fallTime > 0 then
-      H.TriggerGTFOAlert("FALLING!", "fall")
-      H._lastGTFOAlert = now
+    for idx = 1, (MIRRORTIMER_NUMTIMERS or 3) do
+      local timerName, timerValue, timerMax = GetMirrorTimerInfo(idx)
+      if timerName and timerName ~= "" and timerName ~= "UNKNOWN" and timerValue and timerValue > 0 then
+        if timerName == "BREATH" then
+          H.TriggerGTFOAlert("DROWNING!", "fall")
+          H._lastGTFOAlert = now
+          break
+        elseif timerName == "EXHAUSTION" then
+          H.TriggerGTFOAlert("FATIGUE!", "fall")
+          H._lastGTFOAlert = now
+          break
+        end
+        -- Ignore FEIGNDEATH timer
+      end
     end
   end
 end
@@ -1162,40 +1291,71 @@ function H.BuildGTFOFrame()
   
   local f = CreateFrame("Frame", nil, UIParent)
   H.gtfoFrame = f
-  f:SetSize(280, 60)
-  f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  f:SetSize(320, 70)
+  f:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
   f:SetFrameStrata("FULLSCREEN_DIALOG")
   f:Hide()
   
-  -- Background (pulsing red warning)
+  -- Dark semi-transparent background
   local bg = f:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints(f)
-  bg:SetColorTexture(0.8, 0.1, 0.1, 0.7)
+  bg:SetColorTexture(0, 0, 0, 0.75)
   f.bg = bg
   
-  -- Border
-  local border = f:CreateTexture(nil, "OVERLAY")
-  border:SetAllPoints(f)
-  border:SetTexture("Interface/Tooltips/UI-Tooltip-Border")
-  border:SetVertexColor(1, 0, 0, 1)
+  -- Red glow border (inner)
+  local glowSize = 4
+  local glow = {}
+  -- Top
+  glow[1] = f:CreateTexture(nil, "BORDER")
+  glow[1]:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
+  glow[1]:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+  glow[1]:SetHeight(glowSize)
+  glow[1]:SetColorTexture(0.9, 0.1, 0.1, 0.9)
+  -- Bottom
+  glow[2] = f:CreateTexture(nil, "BORDER")
+  glow[2]:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+  glow[2]:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+  glow[2]:SetHeight(glowSize)
+  glow[2]:SetColorTexture(0.9, 0.1, 0.1, 0.9)
+  -- Left
+  glow[3] = f:CreateTexture(nil, "BORDER")
+  glow[3]:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
+  glow[3]:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+  glow[3]:SetWidth(glowSize)
+  glow[3]:SetColorTexture(0.9, 0.1, 0.1, 0.9)
+  -- Right
+  glow[4] = f:CreateTexture(nil, "BORDER")
+  glow[4]:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+  glow[4]:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+  glow[4]:SetWidth(glowSize)
+  glow[4]:SetColorTexture(0.9, 0.1, 0.1, 0.9)
+  f.glow = glow
   
-  -- Text
+  -- Warning text
   local text = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   text:SetPoint("CENTER", f, "CENTER", 0, 0)
   text:SetText("GET OUT!")
-  text:SetTextColor(1, 1, 1, 1)
-  if STANDARD_TEXT_FONT then text:SetFont(STANDARD_TEXT_FONT, 28, "OUTLINE") end
+  text:SetTextColor(1, 0.2, 0.2, 1)
+  if STANDARD_TEXT_FONT then text:SetFont(STANDARD_TEXT_FONT, 32, "OUTLINE") end
   text:SetShadowColor(0, 0, 0, 1)
   text:SetShadowOffset(2, -2)
   f.text = text
   
-  -- Pulse animation
+  -- Pulse animation (border glow pulsing)
   f._pulseAcc = 0
   f:SetScript("OnUpdate", function(self, dt)
     if not self:IsShown() then return end
     self._pulseAcc = (self._pulseAcc or 0) + dt
-    local alpha = 0.5 + 0.3 * math.sin(self._pulseAcc * 6)
-    self.bg:SetAlpha(alpha)
+    
+    -- Pulse the red border glow
+    local pulse = 0.6 + 0.4 * math.sin(self._pulseAcc * 8)
+    for _, g in ipairs(self.glow) do
+      g:SetAlpha(pulse)
+    end
+    
+    -- Subtle text pulse
+    local textPulse = 0.85 + 0.15 * math.sin(self._pulseAcc * 8)
+    self.text:SetAlpha(textPulse)
     
     -- Auto-hide after 2 seconds
     if self._pulseAcc > 2 then
@@ -1212,7 +1372,9 @@ function H.TestGTFOAlert(alertType)
     H.TriggerGTFOAlert("TEST: HIGH DAMAGE", "high")
   elseif alertType == "low" then
     H.TriggerGTFOAlert("TEST: LOW DAMAGE", "low")
-  elseif alertType == "fall" then
-    H.TriggerGTFOAlert("TEST: FALLING", "fall")
+  elseif alertType == "fall" or alertType == "drown" then
+    H.TriggerGTFOAlert("TEST: DROWNING", "fall")
+  elseif alertType == "fatigue" then
+    H.TriggerGTFOAlert("TEST: FATIGUE", "fall")
   end
 end

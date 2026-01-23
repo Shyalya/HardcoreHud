@@ -33,8 +33,13 @@ local function attachDrag(frame)
   frame:SetScript("OnDragStop", function()
     if H.root then
       H.root:StopMovingOrSizing()
-      local p,_,rp,x,y = H.root:GetPoint()
-      HardcoreHUDDB.pos = { x=x, y=y }
+      local cx, cy = H.root:GetCenter()
+      local px, py = UIParent:GetCenter()
+      local x = cx - px
+      local y = cy - py
+      HardcoreHUDDB.pos = { x = x, y = y }
+      H.root:ClearAllPoints()
+      H.root:SetPoint("CENTER", UIParent, "CENTER", x, y)
     end
   end)
 end
@@ -861,6 +866,46 @@ function H.InitLevelingTracker()
       end
     end)
   end
+  
+  -- Track XP gains for session rate calculation
+  if not H._xpTrackingFrame then
+    local xpf = CreateFrame("Frame")
+    H._xpTrackingFrame = xpf
+    H._lastKnownXP = UnitXP("player") or 0
+    H._lastKnownLevel = UnitLevel("player") or 1
+    
+    xpf:RegisterEvent("PLAYER_XP_UPDATE")
+    xpf:RegisterEvent("PLAYER_LEVEL_UP")
+    xpf:SetScript("OnEvent", function(self, event, ...)
+      local currentXP = UnitXP("player") or 0
+      local currentLevel = UnitLevel("player") or 1
+      
+      if event == "PLAYER_LEVEL_UP" then
+        -- Level up! Add the remaining XP from previous level
+        local prevLevelMax = H._lastKnownLevelMax or (UnitXPMax("player") or 1)
+        local xpToLevelUp = prevLevelMax - (H._lastKnownXP or 0)
+        H._sessionTotalXPGained = (H._sessionTotalXPGained or 0) + xpToLevelUp + currentXP
+        H._lastKnownXP = currentXP
+        H._lastKnownLevel = currentLevel
+        H._lastKnownLevelMax = UnitXPMax("player") or 1
+        if HardcoreHUDDB.debug then
+          print(string.format("[HardcoreHUD] Level up! Session XP: %d", H._sessionTotalXPGained or 0))
+        end
+      elseif event == "PLAYER_XP_UPDATE" then
+        -- Normal XP gain
+        if currentXP > (H._lastKnownXP or 0) and currentLevel == (H._lastKnownLevel or 1) then
+          local xpGained = currentXP - (H._lastKnownXP or 0)
+          H._sessionTotalXPGained = (H._sessionTotalXPGained or 0) + xpGained
+          if HardcoreHUDDB.debug then
+            print(string.format("[HardcoreHUD] +%d XP (Session total: %d)", xpGained, H._sessionTotalXPGained or 0))
+          end
+        end
+        H._lastKnownXP = currentXP
+        H._lastKnownLevel = currentLevel
+        H._lastKnownLevelMax = UnitXPMax("player") or 1
+      end
+    end)
+  end
 end
 
 function H.UpdateLevelingTracker()
@@ -882,6 +927,8 @@ function H.UpdateLevelingTracker()
   local opts = HardcoreHUDDB.leveling
   if opts.showXPBar ~= false then
     -- Calculate completed quest XP
+    -- IMPORTANT: Save and restore original quest selection to avoid interfering with QuestLog UI
+    local originalSelection = GetQuestLogSelection and GetQuestLogSelection() or 0
     local questXP = 0
     local numEntries = GetNumQuestLogEntries and GetNumQuestLogEntries() or 0
     for i = 1, numEntries do
@@ -891,6 +938,10 @@ function H.UpdateLevelingTracker()
         local xp = GetQuestLogRewardXP and GetQuestLogRewardXP() or 0
         questXP = questXP + xp
       end
+    end
+    -- Restore original quest selection
+    if originalSelection > 0 and SelectQuestLogEntry then
+      SelectQuestLogEntry(originalSelection)
     end
     
     -- Set main XP bar (blue)
@@ -945,20 +996,26 @@ function H.UpdateLevelingTracker()
     table.insert(infoLines, string.format("Rested: %.0f%%", restedXP))
   end
   
-  -- XP Rate
+  -- XP Rate (based on session XP gained, not total XP)
   if opts.showRate ~= false then
     local elapsed = GetTime() - (H._sessionStartTime or GetTime())
-    if elapsed > 0 then
-      local xpPerHour = (xpCurrent / elapsed) * 3600
+    local sessionXPGained = H._sessionTotalXPGained or 0
+    if elapsed > 60 and sessionXPGained > 0 then  -- Wait at least 1 min for accurate rate
+      local xpPerHour = (sessionXPGained / elapsed) * 3600
       table.insert(infoLines, string.format("Rate: %.0f/h", xpPerHour))
+    elseif sessionXPGained > 0 then
+      table.insert(infoLines, string.format("Rate: +%d XP", sessionXPGained))
+    else
+      table.insert(infoLines, "Rate: --")
     end
   end
   
-  -- Time to Level
+  -- Time to Level (based on session rate)
   if opts.showTimeToLevel ~= false then
     local elapsed = GetTime() - (H._sessionStartTime or GetTime())
-    if elapsed > 0 and xpCurrent > 0 then
-      local xpPerSecond = xpCurrent / elapsed
+    local sessionXPGained = H._sessionTotalXPGained or 0
+    if elapsed > 60 and sessionXPGained > 0 then  -- Need some data for TTL
+      local xpPerSecond = sessionXPGained / elapsed
       local remainingXP = xpMax - xpCurrent
       local secondsToLevel = remainingXP / xpPerSecond
       local hours = math.floor(secondsToLevel / 3600)
@@ -968,6 +1025,8 @@ function H.UpdateLevelingTracker()
       else
         table.insert(infoLines, string.format("TTL: %dm", mins))
       end
+    else
+      table.insert(infoLines, "TTL: --")
     end
   end
   

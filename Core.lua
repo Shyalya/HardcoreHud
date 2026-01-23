@@ -1,8 +1,30 @@
 local addonName = ...
 HardcoreHUD = HardcoreHUD or {}
 local H = HardcoreHUD
--- Ensure SavedVariables table exists as early as possible
+
+-- IMPORTANT: SavedVariables are NOT loaded yet at this point!
+-- They will be available after ADDON_LOADED fires for this addon.
+-- We create an empty table here as fallback, but the real data comes later.
 HardcoreHUDDB = HardcoreHUDDB or {}
+
+-- ADDON_LOADED handler to properly restore saved positions
+local addonLoadedFrame = CreateFrame("Frame")
+addonLoadedFrame:RegisterEvent("ADDON_LOADED")
+addonLoadedFrame:SetScript("OnEvent", function(self, event, loadedAddon)
+  if loadedAddon ~= "HardcoreHud" then return end
+  
+  -- NOW SavedVariables are loaded - restore root frame position
+  if H.root and HardcoreHUDDB.pos then
+    H.root:ClearAllPoints()
+    H.root:SetPoint("CENTER", UIParent, "CENTER", HardcoreHUDDB.pos.x or 0, HardcoreHUDDB.pos.y or -150)
+  end
+  
+  -- Ensure utilities table exists with saved values preserved
+  HardcoreHUDDB.utilities = HardcoreHUDDB.utilities or {}
+  
+  self:UnregisterEvent("ADDON_LOADED")
+end)
+
 -- Target Cast Bar implementation
 function H.InitTargetCastBar()
   H.cast = H.cast or {}
@@ -100,7 +122,7 @@ function H.UpdateTargetCastBarVisibility()
   if HardcoreHUDDB and HardcoreHUDDB.castbar and HardcoreHUDDB.castbar.enabled then
     -- no-op; visibility managed by events
   else
-    H.cast.targetBar:Hide()
+    pcall(H.cast.targetBar.Hide, H.cast.targetBar)
   end
 end
 
@@ -112,8 +134,8 @@ local function setCastProgress(startMS, endMS, isChannel, notInterruptible)
   local duration = H.cast._endTime - H.cast._startTime
   -- Start empty; texture height grows from bottom
   if H.cast.fill then H.cast.fill:SetHeight(0) end
-  H.cast.targetBar:Show()
-  H.cast.targetBar:SetScript("OnUpdate", function(self, elapsed)
+  pcall(H.cast.targetBar.Show, H.cast.targetBar)
+  pcall(H.cast.targetBar.SetScript, H.cast.targetBar, "OnUpdate", function(self, elapsed)
     local now = GetTime()
     local dur = H.cast._endTime - H.cast._startTime
     -- Grow from bottom: progress is elapsed time since start
@@ -142,12 +164,12 @@ local function setCastProgress(startMS, endMS, isChannel, notInterruptible)
       end
       H.cast.spark:ClearAllPoints()
       H.cast.spark:SetPoint("CENTER", self, "TOP", 0, 0)
-      self:SetScript("OnUpdate", nil)
-      self:Hide()
+      pcall(self.SetScript, self, "OnUpdate", nil)
+      pcall(self.Hide, self)
       -- stop interrupt highlight
       if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
       if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-      if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+      if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
     end
   end)
   -- Evaluate interrupt state for this cast
@@ -159,17 +181,18 @@ function H.HandleTargetCastEvent(event, unit)
   if not HardcoreHUDDB or not HardcoreHUDDB.castbar or not HardcoreHUDDB.castbar.enabled then return end
   if not H.cast or not H.cast.targetBar then H.InitTargetCastBar() end
   if event == "UNIT_SPELLCAST_START" then
-    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitCastingInfo("target")
-    if name and startTimeMS and endTimeMS then
+    -- Classic Era: name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, notInterruptible
+    local name, _, _, startTimeMS, endTimeMS, _, _, notInterruptible = UnitCastingInfo("target")
+    if name and startTimeMS and endTimeMS and type(startTimeMS) == "number" and type(endTimeMS) == "number" then
       H.cast.spell:SetText(name)
       H.cast._spellName = name
       setCastProgress(startTimeMS, endTimeMS, false, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
-    if H.cast and H.cast.targetBar then H.cast.targetBar:SetScript("OnUpdate", nil); H.cast.targetBar:Hide() end
+    if H.cast and H.cast.targetBar then pcall(H.cast.targetBar.SetScript, H.cast.targetBar, "OnUpdate", nil); pcall(H.cast.targetBar.Hide, H.cast.targetBar) end
     if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
     if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+    if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
     -- Audio cues: cast finished / interrupted
     if HardcoreHUDDB.audio and HardcoreHUDDB.audio.enabled then
       if event == "UNIT_SPELLCAST_STOP" and HardcoreHUDDB.audio.castFinish then
@@ -179,31 +202,31 @@ function H.HandleTargetCastEvent(event, unit)
       end
     end
   elseif event == "UNIT_SPELLCAST_DELAYED" then
-    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitCastingInfo("target")
-    if name and startTimeMS and endTimeMS then
+    local name, _, _, startTimeMS, endTimeMS, _, _, notInterruptible = UnitCastingInfo("target")
+    if name and startTimeMS and endTimeMS and type(startTimeMS) == "number" and type(endTimeMS) == "number" then
       H.cast.spell:SetText(name)
       H.cast._spellName = name
       setCastProgress(startTimeMS, endTimeMS, false, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_CHANNEL_START" then
-    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitChannelInfo("target")
-    if name and startTimeMS and endTimeMS then
+    local name, _, _, startTimeMS, endTimeMS, _, _, notInterruptible = UnitChannelInfo("target")
+    if name and startTimeMS and endTimeMS and type(startTimeMS) == "number" and type(endTimeMS) == "number" then
       H.cast.spell:SetText(name)
       H.cast._spellName = name
       setCastProgress(startTimeMS, endTimeMS, true, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
-    local name, _, _, _, startTimeMS, endTimeMS, _, notInterruptible = UnitChannelInfo("target")
-    if name and startTimeMS and endTimeMS then
+    local name, _, _, startTimeMS, endTimeMS, _, _, notInterruptible = UnitChannelInfo("target")
+    if name and startTimeMS and endTimeMS and type(startTimeMS) == "number" and type(endTimeMS) == "number" then
       H.cast.spell:SetText(name)
       H.cast._spellName = name
       setCastProgress(startTimeMS, endTimeMS, true, notInterruptible)
     end
   elseif event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-    if H.cast and H.cast.targetBar then H.cast.targetBar:SetScript("OnUpdate", nil); H.cast.targetBar:Hide() end
+    if H.cast and H.cast.targetBar then pcall(H.cast.targetBar.SetScript, H.cast.targetBar, "OnUpdate", nil); pcall(H.cast.targetBar.Hide, H.cast.targetBar) end
     if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
     if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+    if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
   end
 end
 
@@ -224,24 +247,24 @@ do
       if event == "PLAYER_TARGET_CHANGED" then
         -- Refresh state when target changes
         if HardcoreHUDDB and HardcoreHUDDB.castbar and HardcoreHUDDB.castbar.enabled then
-          local name, _, _, _, sMS, eMS, _, notInterruptible = UnitCastingInfo("target")
-          if not name then name, _, _, _, sMS, eMS, _, notInterruptible = UnitChannelInfo("target") end
-          if name and sMS and eMS then
+          local name, _, _, sMS, eMS, _, _, notInterruptible = UnitCastingInfo("target")
+          if not name then name, _, _, sMS, eMS, _, _, notInterruptible = UnitChannelInfo("target") end
+          if name and sMS and eMS and type(sMS) == "number" and type(eMS) == "number" then
             if not H.cast or not H.cast.targetBar then H.InitTargetCastBar() end
             H.cast.spell:SetText(name)
             H.cast._spellName = name
             setCastProgress(sMS, eMS, UnitChannelInfo("target") ~= nil, notInterruptible)
           else
-            if H.cast and H.cast.targetBar then H.cast.targetBar:SetScript("OnUpdate", nil); H.cast.targetBar:Hide() end
+            if H.cast and H.cast.targetBar then pcall(H.cast.targetBar.SetScript, H.cast.targetBar, "OnUpdate", nil); pcall(H.cast.targetBar.Hide, H.cast.targetBar) end
             if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
             if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-            if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+            if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
           end
         else
-          if H.cast and H.cast.targetBar then H.cast.targetBar:Hide() end
+          if H.cast and H.cast.targetBar then pcall(H.cast.targetBar.Hide, H.cast.targetBar) end
           if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
           if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-          if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+          if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
         end
       else
         H.HandleTargetCastEvent(event, unit)
@@ -306,7 +329,7 @@ function H.EvaluateInterruptState(notInterruptible)
   if not HardcoreHUDDB.trackers or not HardcoreHUDDB.trackers.interruptEnabled then
     if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
     if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+    if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
     return
   end
   local active = true
@@ -341,7 +364,7 @@ function H.EvaluateInterruptState(notInterruptible)
   else
     if H.cast and H.cast.interruptGlow then H.cast.interruptGlow:SetColorTexture(1,0.2,0.2,0) end
     if H.cast and H.cast._intrPulse then H.cast._intrPulse.active = false end
-    if H.cast and H.cast.interruptButton then H.cast.interruptButton:Hide() end
+    if H.cast and H.cast.interruptButton then pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
   end
 end
 
@@ -700,7 +723,16 @@ f:SetHitRectInsets(-200, -200, -220, -20)
 f:RegisterForDrag("LeftButton")
 f:SetMovable(not HardcoreHUDDB.lock)
 f:SetScript("OnDragStart", function(self) self:StartMoving() end)
-f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); local p,_,rp,x,y = self:GetPoint(); HardcoreHUDDB.pos = { x=x, y=y } end)
+f:SetScript("OnDragStop", function(self)
+  self:StopMovingOrSizing()
+  local cx, cy = self:GetCenter()
+  local px, py = UIParent:GetCenter()
+  local x = cx - px
+  local y = cy - py
+  HardcoreHUDDB.pos = { x = x, y = y }
+  self:ClearAllPoints()
+  self:SetPoint("CENTER", UIParent, "CENTER", x, y)
+end)
 
 -- Event hub
 local ev = CreateFrame("Frame")
@@ -731,6 +763,11 @@ TryRegister(ev, "SPELLS_CHANGED")
 TryRegister(ev, "SPELL_UPDATE_COOLDOWN")
 ev:SetScript("OnEvent", function(_, event, ...)
   if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+    -- CRITICAL: Restore saved position from SavedVariables (now loaded)
+    if H.root and HardcoreHUDDB.pos then
+      H.root:ClearAllPoints()
+      H.root:SetPoint("CENTER", UIParent, "CENTER", HardcoreHUDDB.pos.x or 0, HardcoreHUDDB.pos.y or -150)
+    end
     H.Init()
     H.UpdateAll()
     if H.UpdateOOMOverlay then H.UpdateOOMOverlay(true) end
@@ -742,6 +779,16 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if H.InitGTFO then H.InitGTFO() end
     if H.BuildGTFOFrame then H.BuildGTFOFrame() end
     H._sessionStartTime = GetTime()
+    -- Store starting XP for session rate calculation
+    H._sessionStartXP = UnitXP("player") or 0
+    H._sessionStartLevel = UnitLevel("player") or 1
+    H._sessionTotalXPGained = 0
+    -- Rebuild utility buttons to apply saved position
+    if H.RebuildUtilityButtons then
+      C_Timer.After(0.1, function()
+        if H.RebuildUtilityButtons then H.RebuildUtilityButtons() end
+      end)
+    end
   elseif event == "PLAYER_REGEN_DISABLED" then
     -- Start of combat
     H._combatStartTime = GetTime()
@@ -996,8 +1043,12 @@ function H.InitOOMOverlay()
 end
 
 function H.UpdateOOMOverlay(force)
-  -- Skip visibility updates during combat; defer to PLAYER_REGEN_ENABLED
-  if InCombatLockdown() then
+  -- Only show OOM warning during combat
+  if not InCombatLockdown or not InCombatLockdown() then
+    if H.oomOverlay then
+      pcall(function() H.oomOverlay:Hide() end)
+      H.oomOverlay._pulse.active = false
+    end
     return
   end
   
@@ -1099,8 +1150,13 @@ function H.ApplyLock()
       H.root:SetScript("OnDragStart", function(self) self:StartMoving() end)
       H.root:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local p,_,rp,x,y = self:GetPoint()
-        HardcoreHUDDB.pos = { x=x, y=y }
+        local cx, cy = self:GetCenter()
+        local px, py = UIParent:GetCenter()
+        local x = cx - px
+        local y = cy - py
+        HardcoreHUDDB.pos = { x = x, y = y }
+        self:ClearAllPoints()
+        self:SetPoint("CENTER", UIParent, "CENTER", x, y)
       end)
     else
       H.root:RegisterForDrag()

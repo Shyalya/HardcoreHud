@@ -466,8 +466,13 @@ function H.BuildOptions()
       H.root:SetScript("OnDragStart", function(self) self:StartMoving() end)
       H.root:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local p,_,rp,x,y = self:GetPoint()
-        HardcoreHUDDB.pos = { x=x, y=y }
+        local cx, cy = self:GetCenter()
+        local px, py = UIParent:GetCenter()
+        local x = cx - px
+        local y = cy - py
+        HardcoreHUDDB.pos = { x = x, y = y }
+        self:ClearAllPoints()
+        self:SetPoint("CENTER", UIParent, "CENTER", x, y)
       end)
       -- reattach drag to child bars
       if H.bars then
@@ -904,7 +909,7 @@ end
     HardcoreHUDDB.trackers.showInterruptButton = self:GetChecked()
     print("HardcoreHUD: Interrupt button "..(HardcoreHUDDB.trackers.showInterruptButton and "ON" or "OFF"))
     if H.cast and H.cast.interruptButton then
-      if HardcoreHUDDB.trackers.showInterruptButton then H.cast.interruptButton:Show() else H.cast.interruptButton:Hide() end
+      if HardcoreHUDDB.trackers.showInterruptButton then pcall(H.cast.interruptButton.Show, H.cast.interruptButton) else pcall(H.cast.interruptButton.Hide, H.cast.interruptButton) end
     end
   end)
 
