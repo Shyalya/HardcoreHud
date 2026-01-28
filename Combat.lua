@@ -811,14 +811,20 @@ local function OnCombatLogEvent()
   
   if not validEvents[eventType] then return end
   
-  -- Reset the leash timer on successful hit
+  -- Reset the leash timer AND distance on successful hit
   local now = GetTime()
   H._leashState.lastHitTime = now
   H._leashState.targetGUID = targetGUID
   
+  -- Reset start position to current player location (yards reset)
+  local px, py = UnitPosition("player")
+  if px and py then
+    H._leashState.startPosition = { x = px, y = py }
+  end
+  
   -- Debug output
   if HardcoreHUDDB.debug then
-    print(string.format("[HardcoreHUD] Leash timer reset: hit %s with %s", destName or "target", eventType))
+    print(string.format("[HardcoreHUD] Leash reset: hit %s with %s (timer + distance)", destName or "target", eventType))
   end
 end
 
@@ -860,6 +866,8 @@ leashResetFrame:SetScript("OnEvent", function(self, event)
     H._leashState.lastHitTime = 0
     H._leashState.combatStartTime = 0
     if H.leashWarn then H.leashWarn:Hide() end
+    -- Hide range display when leaving combat
+    if H.rangeDisplay then H.rangeDisplay:Hide() end
   elseif event == "PLAYER_TARGET_CHANGED" then
     -- New target, reset start position but keep timer running
     H._leashState.startPosition = nil
@@ -869,6 +877,8 @@ leashResetFrame:SetScript("OnEvent", function(self, event)
     if px and py then
       H._leashState.startPosition = { x = px, y = py }
     end
+    -- Immediately update range display for new target
+    if H.CheckRangeDisplay then H.CheckRangeDisplay() end
   end
 end)
 
@@ -1092,8 +1102,20 @@ function H.CheckRangeDisplay()
     return
   end
   
-  -- Normal mode: only show when enabled
+  -- Normal mode: only show for hostile/attackable targets
+  -- Hide for: no target, friendly targets, party/raid members, dead targets
   if not UnitExists("target") then
+    H.rangeDisplay:Hide()
+    return
+  end
+  
+  -- Hide for friendly targets (party members, NPCs, etc.)
+  local isEnemy = UnitIsEnemy("player", "target")
+  local canAttack = UnitCanAttack("player", "target")
+  local isDead = UnitIsDead("target") or UnitIsGhost("target")
+  
+  -- Only show range for attackable enemies that are alive
+  if not (isEnemy or canAttack) or isDead then
     H.rangeDisplay:Hide()
     return
   end
@@ -1162,35 +1184,24 @@ function H.InitGTFO()
   }
   
   -- Dangerous debuff types that indicate AoE/Environment damage
+  -- NOTE: Only include debuffs from GROUND EFFECTS that you can move out of!
+  -- Do NOT include normal mob debuffs (poison, curse, etc.) - you can't "get out" of those
   H._dangerousDebuffs = {
-    -- Fire/Burn effects
-    ["Burning"] = "high",
-    ["Immolate"] = "high",
-    ["Rend"] = "high",
-    ["Incinerate"] = "high",
+    -- Ground-based fire effects (boss mechanics, environmental)
+    ["Rain of Fire"] = "high",
+    ["Blizzard"] = "high",
+    ["Hellfire"] = "high",
+    ["Flamestrike"] = "high",
+    ["Consecration"] = "medium",  -- Only if from enemy
+    ["Death and Decay"] = "high",
     
-    -- Poison effects
-    ["Poison"] = "medium",
-    ["Deadly Poison"] = "high",
-    ["Crippling Poison"] = "medium",
-    ["Wound Poison"] = "medium",
+    -- Dungeon/Raid specific ground effects
+    ["Living Bomb"] = "high",      -- Move away from others
+    ["Baron Geddon Bomb"] = "high",
     
-    -- Curse effects
-    ["Curse of Weakness"] = "low",
-    ["Curse of Elements"] = "low",
-    ["Curse of Recklessness"] = "high",
-    
-    -- Disease effects
-    ["Plague"] = "medium",
-    ["Black Plague"] = "high",
-    ["Cripple"] = "medium",
-    
-    -- Other dangerous effects
-    ["Corruption"] = "medium",
-    ["Fear"] = "high",
-    ["Frost Armor"] = "low",
-    ["Slow"] = "low",
-    ["Bleed"] = "medium",
+    -- Environmental hazards
+    ["Lava"] = "high",
+    ["Burning Adrenaline"] = "high",
   }
   
   -- Track last alert time to prevent spam
@@ -1241,8 +1252,13 @@ function H.CheckDangerousDebuffs()
       local timerName, timerValue, timerMax = GetMirrorTimerInfo(idx)
       if timerName and timerName ~= "" and timerName ~= "UNKNOWN" and timerValue and timerValue > 0 then
         if timerName == "BREATH" then
-          H.TriggerGTFOAlert("DROWNING!", "fall")
-          H._lastGTFOAlert = now
+          -- Only trigger drowning alert when breath is below threshold (default: 50%)
+          local breathThreshold = (HardcoreHUDDB.gtfo and HardcoreHUDDB.gtfo.breathThreshold) or 50
+          local breathPercent = (timerMax and timerMax > 0) and (timerValue / timerMax * 100) or 100
+          if breathPercent <= breathThreshold then
+            H.TriggerGTFOAlert("DROWNING!", "fall")
+            H._lastGTFOAlert = now
+          end
           break
         elseif timerName == "EXHAUSTION" then
           H.TriggerGTFOAlert("FATIGUE!", "fall")

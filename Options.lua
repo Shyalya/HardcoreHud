@@ -351,15 +351,31 @@ function H.BuildOptions()
   gtfoFall:ClearAllPoints()
   gtfoFall:SetPoint("TOPLEFT", gtfoLow, "BOTTOMLEFT", 0, -8)
   gtfoFall:SetChecked(HardcoreHUDDB.gtfo.fallAlert ~= false)
-  if _G[gtfoFall:GetName().."Text"] then _G[gtfoFall:GetName().."Text"]:SetText("Fall Alerts") end
+  if _G[gtfoFall:GetName().."Text"] then _G[gtfoFall:GetName().."Text"]:SetText("Fall/Drowning Alerts") end
   gtfoFall:SetScript("OnClick", function(self)
     HardcoreHUDDB.gtfo.fallAlert = self:GetChecked()
+  end)
+
+  -- Drowning alert threshold slider (when to show "DROWNING!" warning)
+  if HardcoreHUDDB.gtfo.breathThreshold == nil then HardcoreHUDDB.gtfo.breathThreshold = 50 end
+  local gtfoBreath = CreateFrame("Slider", "HardcoreHUDGTFOBreathThreshold", panelWarnings, "OptionsSliderTemplate")
+  gtfoBreath:ClearAllPoints()
+  gtfoBreath:SetPoint("TOPLEFT", gtfoFall, "BOTTOMLEFT", 0, -18)
+  gtfoBreath:SetMinMaxValues(10, 90)
+  gtfoBreath:SetValueStep(5)
+  gtfoBreath:SetValue(HardcoreHUDDB.gtfo.breathThreshold or 50)
+  if _G[gtfoBreath:GetName().."Low"] then _G[gtfoBreath:GetName().."Low"]:SetText("10%") end
+  if _G[gtfoBreath:GetName().."High"] then _G[gtfoBreath:GetName().."High"]:SetText("90%") end
+  if _G[gtfoBreath:GetName().."Text"] then _G[gtfoBreath:GetName().."Text"]:SetText("Drowning Alert at " .. math.floor(HardcoreHUDDB.gtfo.breathThreshold or 50) .. "% breath") end
+  gtfoBreath:SetScript("OnValueChanged", function(self, val)
+    HardcoreHUDDB.gtfo.breathThreshold = val
+    if _G[self:GetName().."Text"] then _G[self:GetName().."Text"]:SetText("Drowning Alert at " .. math.floor(val) .. "% breath") end
   end)
 
   -- GTFO Volume slider
   local gtfoVol = CreateFrame("Slider", "HardcoreHUDGTFOVolume", panelWarnings, "OptionsSliderTemplate")
   gtfoVol:ClearAllPoints()
-  gtfoVol:SetPoint("TOPLEFT", gtfoFall, "BOTTOMLEFT", 0, -18)
+  gtfoVol:SetPoint("TOPLEFT", gtfoBreath, "BOTTOMLEFT", 0, -18)
   gtfoVol:SetMinMaxValues(0, 1)
   gtfoVol:SetValueStep(0.1)
   gtfoVol:SetValue(HardcoreHUDDB.gtfo.volume or 1.0)

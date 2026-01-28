@@ -96,6 +96,11 @@ if not H.QueueSetAttribute then
   function H.QueueSetAttribute(frame, key, value)
     if not frame or not key then return end
     if not InCombatLockdown() then
+      -- Handle special keys that aren't SetAttribute calls
+      if key == "_propagateKeyboard" and frame.SetPropagateKeyboardInput then
+        pcall(frame.SetPropagateKeyboardInput, frame, value)
+        return
+      end
       if frame.SetAttribute then pcall(frame.SetAttribute, frame, key, value) end
       return
     end
@@ -105,9 +110,14 @@ if not H.QueueSetAttribute then
   function H.ApplyPendingAttributes()
     if not H._pendingAttributes then return end
     for frame, attrs in pairs(H._pendingAttributes) do
-      if frame and frame.SetAttribute then
+      if frame then
         for k, v in pairs(attrs) do
-          pcall(frame.SetAttribute, frame, k, v)
+          -- Handle special keys that aren't SetAttribute calls
+          if k == "_propagateKeyboard" and frame.SetPropagateKeyboardInput then
+            pcall(frame.SetPropagateKeyboardInput, frame, v)
+          elseif frame.SetAttribute then
+            pcall(frame.SetAttribute, frame, k, v)
+          end
         end
       end
     end
@@ -1880,15 +1890,19 @@ local CLASS_BUFF_SPELLS = {
   BLESSING_OF_WISDOM   = 19742,  -- Rank 1
   -- PRIEST
   POWER_WORD_FORTITUDE = 1243,   -- Rank 1
+  PRAYER_OF_FORTITUDE  = {21562, 21564},  -- Rank 1, Rank 2
   INNER_FIRE           = 588,    -- Rank 1
   DIVINE_SPIRIT        = 14752,  -- Rank 1
+  PRAYER_OF_SPIRIT     = {27681, 27841},  -- Rank 1, Rank 2
   SHADOW_PROTECTION    = 976,    -- Rank 1
+  PRAYER_OF_SHADOW     = {27683, 27685},  -- Rank 1, Rank 2
   -- DRUID
   MARK_OF_THE_WILD     = 1126,   -- Rank 1
-  GIFT_OF_THE_WILD     = 21849,  -- Rank 1
+  GIFT_OF_THE_WILD     = {21849, 21850},  -- Rank 1, Rank 2
   THORNS               = 467,    -- Rank 1
   -- MAGE
   ARCANE_INTELLECT     = 1459,   -- Rank 1
+  ARCANE_BRILLIANCE    = {23028, 27127},  -- Rank 1, Rank 2
   MAGE_ARMOR           = 6117,   -- Rank 1
   ICE_ARMOR            = 7302,   -- Rank 1
   FROST_ARMOR          = 168,    -- Rank 1
@@ -1907,12 +1921,28 @@ local CLASS_BUFF_SPELLS = {
 }
 
 -- Helper: Check if player has a buff by spell ID (works with any locale)
-local function PlayerHasBuffBySpellID(spellID)
-  if not spellID then return false end
-  -- Get the localized name from the spell ID
-  local spellName = GetSpellInfo and GetSpellInfo(spellID)
+-- Supports single ID or table of IDs (for multi-rank spells)
+local function PlayerHasBuffBySpellID(spellIDorTable)
+  if not spellIDorTable then return false end
+  
+  -- Handle table of spell IDs (multiple ranks)
+  if type(spellIDorTable) == "table" then
+    for _, spellID in ipairs(spellIDorTable) do
+      local spellName = GetSpellInfo and GetSpellInfo(spellID)
+      if spellName then
+        for i = 1, 40 do
+          local buffName = UnitBuff("player", i)
+          if not buffName then break end
+          if buffName == spellName then return true end
+        end
+      end
+    end
+    return false
+  end
+  
+  -- Single spell ID
+  local spellName = GetSpellInfo and GetSpellInfo(spellIDorTable)
   if not spellName then return false end
-  -- Check all player buffs
   for i = 1, 40 do
     local buffName = UnitBuff("player", i)
     if not buffName then break end
@@ -2191,14 +2221,19 @@ function H.InitReminders()
   end
 
     local function UpdateReminders()
-    -- Combat-safe: skip visibility changes during combat to avoid taint
+    -- Combat-safe: skip ALL updates during combat to avoid taint on secure buttons
     local inCombat = InCombatLockdown()
+    if inCombat then
+      -- Schedule refresh after combat ends
+      return
+    end
+    
     if not HardcoreHUDDB.reminders.enabled then
-      if not inCombat then pcall(function() rf:Hide() end) end
+      pcall(function() rf:Hide() end)
       return
     end
       -- Safety: keep frame hidden until we know we have entries
-      if not inCombat then pcall(function() rf:Hide() end) end
+      pcall(function() rf:Hide() end)
 
     -- Build actionable entries (items and self-buffs)
     local entries = {}
@@ -2497,14 +2532,17 @@ function H.InitReminders()
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.BLESSING_OF_WISDOM)
       elseif class == "PRIEST" then
         return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.PRAYER_OF_FORTITUDE)
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.INNER_FIRE) 
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT)
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.PRAYER_OF_SPIRIT)
       elseif class == "DRUID" then
         return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MARK_OF_THE_WILD) 
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.GIFT_OF_THE_WILD) 
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.THORNS)
       elseif class == "MAGE" then
         return PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT) 
+            or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_BRILLIANCE)
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MAGE_ARMOR) 
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ICE_ARMOR) 
             or PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.FROST_ARMOR)
@@ -2548,13 +2586,15 @@ function H.InitReminders()
       end
     -- PRIEST buffs (ID-based)
     elseif class == "PRIEST" and (cats.survival ~= false) then
-      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE) then 
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE) 
+         and not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.PRAYER_OF_FORTITUDE) then 
         AddSpellByID(CLASS_BUFF_SPELLS.POWER_WORD_FORTITUDE); coreAdded = coreAdded + 1 
       end
       if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.INNER_FIRE) then 
         AddSpellByID(CLASS_BUFF_SPELLS.INNER_FIRE); coreAdded = coreAdded + 1 
       end
-      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT) then 
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT) 
+         and not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.PRAYER_OF_SPIRIT) then 
         AddSpellByID(CLASS_BUFF_SPELLS.DIVINE_SPIRIT); coreAdded = coreAdded + 1 
       end
     -- DRUID buffs (ID-based)
@@ -2568,7 +2608,8 @@ function H.InitReminders()
       end
     -- MAGE buffs (ID-based)
     elseif class == "MAGE" and (cats.survival ~= false) then
-      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT) then 
+      if not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT) 
+         and not PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.ARCANE_BRILLIANCE) then 
         AddSpellByID(CLASS_BUFF_SPELLS.ARCANE_INTELLECT); coreAdded = coreAdded + 1 
       end
       local hasArmor = PlayerHasBuffBySpellID(CLASS_BUFF_SPELLS.MAGE_ARMOR) 
@@ -2644,11 +2685,15 @@ function H.InitReminders()
     local cols = 6
     local function ensure(i)
       if rf.btns[i] then return rf.btns[i] end
+      -- Cannot create secure buttons during combat - return nil and skip
+      if InCombatLockdown() then return nil end
       local b = CreateFrame("Button", nil, rf, "SecureActionButtonTemplate")
       b:SetSize(size, size)
       -- Ensure keyboard input is propagated through reminder buttons
       if b.EnableKeyboard then b:EnableKeyboard(false) end
-      if b.SetPropagateKeyboardInput then b:SetPropagateKeyboardInput(true) end
+      if b.SetPropagateKeyboardInput then
+        b:SetPropagateKeyboardInput(true)
+      end
       b.bg = b:CreateTexture(nil, "BACKGROUND")
       b.bg:SetAllPoints()
       b.bg:SetColorTexture(0.45, 0.05, 0.05, 0.85)
@@ -2725,7 +2770,9 @@ function H.InitReminders()
         if iname and iname ~= "" then attrItem = iname end
       end
       if not attrItem then attrItem = "item:"..tostring(id) end
-      H.QueueSetAttribute(b, "type", "item"); H.QueueSetAttribute(b, "item", attrItem)
+      -- Direct SetAttribute is safe here - UpdateReminders exits early during combat
+      b:SetAttribute("type", "item")
+      b:SetAttribute("item", attrItem)
       if GetItemCount then b.count:SetText(GetItemCount(id)) else b.count:SetText("") end
     end
     local function setSpell(b, name, tex)
@@ -2743,9 +2790,11 @@ function H.InitReminders()
         end
       end
       b.icon:SetTexture(resolvedTex)
-      H.QueueSetAttribute(b, "type", "spell"); H.QueueSetAttribute(b, "spell", name)
+      -- Direct SetAttribute is safe here - UpdateReminders exits early during combat
+      b:SetAttribute("type", "spell")
+      b:SetAttribute("spell", name)
       -- Always target self for reminder buffs, regardless of current target
-      H.QueueSetAttribute(b, "unit", "player")
+      b:SetAttribute("unit", "player")
       b.count:SetText("")
     end
 
@@ -2760,9 +2809,11 @@ function H.InitReminders()
       if not skip then
         shown = shown + 1
         local b = ensure(shown)
-        place(b, shown)
-        if e.kind == "item" then setItem(b, e.id, e.texture) else setSpell(b, e.spell, e.texture) end
-        if not InCombatLockdown() then pcall(function() b:Show() end) end
+        if b then  -- nil if created during combat
+          place(b, shown)
+          if e.kind == "item" then setItem(b, e.id, e.texture) else setSpell(b, e.spell, e.texture) end
+          if not InCombatLockdown() then pcall(function() b:Show() end) end
+        end
       end
     end
     -- hide the rest (combat-safe)
@@ -3161,12 +3212,43 @@ end
 -- ================= Map Visibility Controller ===================
 do
   local prevProps = {}
+  
+  -- List of secure button keys that cannot be shown/hidden during combat
+  local secureButtonKeys = {
+    potionBtn = true,
+    manaBtn = true,
+    bandageBtn = true,
+    hearthBtn = true,
+    racialBtn = true,
+  }
+  
+  -- Check if a frame is a secure button that we manage
+  local function isSecureButton(frame)
+    if not frame or not H then return false end
+    for key, _ in pairs(secureButtonKeys) do
+      if H[key] and H[key] == frame then return true end
+    end
+    -- Also check class CD buttons
+    if H.classCDButtons then
+      for _, btn in ipairs(H.classCDButtons) do
+        if btn == frame then return true end
+      end
+    end
+    return false
+  end
+  
   local function applyProps(frame, shown)
     if not frame then return end
+    
+    -- Skip secure buttons during combat to avoid taint
+    if InCombatLockdown() and isSecureButton(frame) then
+      return
+    end
+    
     if shown then
       -- Special case: don't show bandage button if First Aid is not learned
       if frame == H.bandageBtn and H.bandageBtn._hasFirstAid == false then
-        frame:Hide()
+        if not InCombatLockdown() then frame:Hide() end
         return
       end
       
@@ -3288,7 +3370,8 @@ do
       if self.EnableMouse then pcall(self.EnableMouse, self, true) end
       if self.SetMovable then pcall(self.SetMovable, self, true) end
       -- Don't hide HUD or utility buttons - just make them non-interactive
-      if H then
+      -- Skip during combat to avoid protected action errors
+      if H and not InCombatLockdown() then
         local keys = { "potionBtn", "manaBtn", "bandageBtn", "hearthBtn", "racialBtn" }
         for _, k in ipairs(keys) do
           local f = H[k]
@@ -3300,7 +3383,8 @@ do
     end)
     HardcoreHUDOptions:HookScript("OnHide", function(self)
       -- Restore utility button mouse interaction
-      if H then
+      -- Skip during combat to avoid protected action errors
+      if H and not InCombatLockdown() then
         local keys = { "potionBtn", "manaBtn", "bandageBtn", "hearthBtn", "racialBtn" }
         for _, k in ipairs(keys) do
           local f = H[k]
@@ -3319,6 +3403,8 @@ do
   end
   -- In case Bars.lua created cdIcons separately, hide their buttons too
   function H._ApplyMapVisibilityToCDIcons(shown)
+    -- Skip during combat - cdIcons may be secure
+    if InCombatLockdown() then return end
     if H.bars and H.bars.cdIcons then
       for _, info in ipairs(H.bars.cdIcons) do
         if info and info.btn then if shown then info.btn:Show() else info.btn:Hide() end end
@@ -3498,11 +3584,12 @@ do
 end
 
 -- Thanks for Buff System (auto-thanks buff givers outside group - uses emotes instead of chat)
+-- NOTE: Disabled by default as DoEmote can cause taint in certain situations
 function H.InitThanksBuff()
   if H._thanksBuff then return end
   
   HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or {
-    enabled = true,  -- Re-enabled now that we use emotes instead of chat
+    enabled = false,  -- Disabled by default - DoEmote can cause taint/protected function errors
     emote = "thank",  -- Emote to send (e.g. "thank", "laugh", "wave")
     onlyOutsideGroup = true
   }
@@ -3572,38 +3659,45 @@ function H.InitThanksBuff()
   local uf = CreateFrame("Frame")
   H._thanksBuff = uf
   local acc = 0
-  local inCombat = false
-  local msgCheckDelay = 0
+  local wasInCombat = false
+  local emoteDelay = 0
   uf:SetScript("OnUpdate", function(_, dt)
     acc = acc + dt
     if acc >= 1.0 then  -- Check once per second
       acc = 0
       CheckBuffs()
       
-      -- Track when we leave combat
+      -- Track combat state changes
       local nowInCombat = InCombatLockdown()
-      if inCombat and not nowInCombat then
-        -- Just left combat, set flag to process messages after a delay
-        msgCheckDelay = 2.0  -- Wait 2 seconds for secure context to completely clear
+      if wasInCombat and not nowInCombat then
+        -- Just left combat, set delay before processing emotes
+        emoteDelay = 2.0
       end
-      inCombat = nowInCombat
+      wasInCombat = nowInCombat
+      
+      -- If we have emotes queued and not in combat, start processing them
+      if #emoteQueue > 0 and not nowInCombat and emoteDelay <= 0 then
+        emoteDelay = 0.5  -- Small delay before first emote
+      end
     end
     
-    -- Process queued emotes with delay after leaving combat
-    if msgCheckDelay and msgCheckDelay > 0 then
-      msgCheckDelay = msgCheckDelay - dt
-      if msgCheckDelay <= 0 then
-        msgCheckDelay = nil
-        -- Send emotes one at a time with 500ms between them
-        if #emoteQueue > 0 and not InCombatLockdown() then
+    -- Process queued emotes with delay (only when not in combat)
+    if emoteDelay > 0 then
+      emoteDelay = emoteDelay - dt
+      if emoteDelay <= 0 and #emoteQueue > 0 then
+        -- Double-check we're not in combat before emoting
+        if not InCombatLockdown() then
           local emote = table.remove(emoteQueue, 1)
           if emote then
             pcall(DoEmote, emote)
           end
-          -- Schedule next emote check
+          -- Schedule next emote if more in queue
           if #emoteQueue > 0 then
-            msgCheckDelay = 0.5  -- Wait 500ms before next emote
+            emoteDelay = 0.5  -- Wait 500ms between emotes
           end
+        else
+          -- Got back into combat, wait longer
+          emoteDelay = 2.0
         end
       end
     end

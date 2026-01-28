@@ -755,6 +755,35 @@ function H.InitLevelingTracker()
     pos = { x = 0, y = -350 }
   }
   
+  -- Initialize or restore session data from SavedVariables
+  -- Session persists across reloads/zone changes but resets on logout
+  HardcoreHUDDB.leveling.session = HardcoreHUDDB.leveling.session or {}
+  local session = HardcoreHUDDB.leveling.session
+  
+  -- Check if this is a fresh login (session expired) or a reload/zone change
+  local currentTime = time()  -- Real-world time (not GetTime())
+  local sessionTimeout = 300  -- 5 minutes - if longer than this since last update, reset session
+  
+  if session.lastUpdateTime and (currentTime - session.lastUpdateTime) < sessionTimeout then
+    -- Restore session data
+    H._sessionStartTime = GetTime() - (session.elapsedTime or 0)
+    H._sessionStartXP = session.startXP or UnitXP("player")
+    H._sessionStartLevel = session.startLevel or UnitLevel("player")
+    H._sessionTotalXPGained = session.totalXPGained or 0
+    H._lastKnownXP = session.lastKnownXP or UnitXP("player")
+    H._lastKnownLevel = session.lastKnownLevel or UnitLevel("player")
+    H._lastKnownLevelMax = session.lastKnownLevelMax or UnitXPMax("player")
+  else
+    -- Fresh session
+    H._sessionStartTime = GetTime()
+    H._sessionStartXP = UnitXP("player")
+    H._sessionStartLevel = UnitLevel("player")
+    H._sessionTotalXPGained = 0
+    H._lastKnownXP = UnitXP("player")
+    H._lastKnownLevel = UnitLevel("player")
+    H._lastKnownLevelMax = UnitXPMax("player") or 1
+  end
+  
   local f = CreateFrame("Frame", "HardcoreHUDLevelingTracker", UIParent)
   H.levelingTracker = f
   f:SetSize(320, 65)
@@ -871,14 +900,34 @@ function H.InitLevelingTracker()
   if not H._xpTrackingFrame then
     local xpf = CreateFrame("Frame")
     H._xpTrackingFrame = xpf
-    H._lastKnownXP = UnitXP("player") or 0
-    H._lastKnownLevel = UnitLevel("player") or 1
+    
+    -- Helper function to save session data to SavedVariables
+    local function SaveSessionData()
+      if not HardcoreHUDDB.leveling then return end
+      HardcoreHUDDB.leveling.session = HardcoreHUDDB.leveling.session or {}
+      local session = HardcoreHUDDB.leveling.session
+      session.elapsedTime = GetTime() - (H._sessionStartTime or GetTime())
+      session.startXP = H._sessionStartXP
+      session.startLevel = H._sessionStartLevel
+      session.totalXPGained = H._sessionTotalXPGained or 0
+      session.lastKnownXP = H._lastKnownXP
+      session.lastKnownLevel = H._lastKnownLevel
+      session.lastKnownLevelMax = H._lastKnownLevelMax
+      session.lastUpdateTime = time()  -- Real-world time
+    end
     
     xpf:RegisterEvent("PLAYER_XP_UPDATE")
     xpf:RegisterEvent("PLAYER_LEVEL_UP")
+    xpf:RegisterEvent("PLAYER_LOGOUT")
     xpf:SetScript("OnEvent", function(self, event, ...)
       local currentXP = UnitXP("player") or 0
       local currentLevel = UnitLevel("player") or 1
+      
+      if event == "PLAYER_LOGOUT" then
+        -- Save session data before logout
+        SaveSessionData()
+        return
+      end
       
       if event == "PLAYER_LEVEL_UP" then
         -- Level up! Add the remaining XP from previous level
@@ -888,6 +937,7 @@ function H.InitLevelingTracker()
         H._lastKnownXP = currentXP
         H._lastKnownLevel = currentLevel
         H._lastKnownLevelMax = UnitXPMax("player") or 1
+        SaveSessionData()
         if HardcoreHUDDB.debug then
           print(string.format("[HardcoreHUD] Level up! Session XP: %d", H._sessionTotalXPGained or 0))
         end
@@ -903,6 +953,17 @@ function H.InitLevelingTracker()
         H._lastKnownXP = currentXP
         H._lastKnownLevel = currentLevel
         H._lastKnownLevelMax = UnitXPMax("player") or 1
+        SaveSessionData()
+      end
+    end)
+    
+    -- Also save periodically (every 30 seconds) in case of crash
+    local saveAcc = 0
+    xpf:SetScript("OnUpdate", function(_, dt)
+      saveAcc = saveAcc + dt
+      if saveAcc >= 30 then
+        saveAcc = 0
+        SaveSessionData()
       end
     end)
   end
@@ -915,7 +976,21 @@ function H.UpdateLevelingTracker()
   local f = H.levelingTracker
   local level = UnitLevel("player")
   local xpCurrent = UnitXP("player") or 0
-  local xpMax = UnitXPMax("player") or 1
+  local xpMax = UnitXPMax("player") or 0
+  
+  -- At max level, xpMax is 0 - hide the tracker or show "Max Level"
+  if xpMax <= 0 then
+    f.levelText:SetText(string.format("Level: %d (Max)", level))
+    f.xpBar:SetValue(100)
+    f.xpBar:SetStatusBarColor(0.8, 0.6, 0, 0.9)  -- Gold color for max level
+    f.xpText:SetText("Max Level")
+    f.questOverlay:Hide()
+    f.restedOverlay:Hide()
+    f.info:SetText("")
+    f:Show()
+    return
+  end
+  
   local xpPercent = (xpCurrent / xpMax) * 100
   
   f:Show()
