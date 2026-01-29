@@ -1084,6 +1084,8 @@ function H.UpdateOOMOverlay(force)
   local noRecovery = (not readyPotion) and (not recoveryReady)
   local shouldShow = (pct <= thr) and (considerRecovery and noRecovery or true)
   -- Also surface a separate clickable mana potion button (does not replace healing potion)
+  -- Note: manaBtn visibility is handled by RebuildUtilityButtons in Utilities.lua
+  -- Only update the texture/item binding here, not visibility
   if H.manaBtn then
     if pct <= thr and readyPotion then
       H.manaBtn.itemID = readyPotion
@@ -1091,9 +1093,6 @@ function H.UpdateOOMOverlay(force)
       local attrVal = itemName and itemName or ("item:"..tostring(readyPotion))
       if H.manaBtn.SetAttribute then H.QueueSetAttribute(H.manaBtn, "item", attrVal) end
       if H.manaBtn.icon and GetItemIcon then H.manaBtn.icon:SetTexture(GetItemIcon(readyPotion) or "Interface/Icons/INV_Potion_76") end
-      pcall(function() H.manaBtn:Show() end)
-    else
-      pcall(function() H.manaBtn:Hide() end)
     end
   end
   if shouldShow then

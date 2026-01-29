@@ -442,21 +442,14 @@ function H.BuildUtilities()
   -- Potion count and click-to-use
   local p = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.potionBtn = p
-  -- Place utilities below the combo bar, above the cooldown bar
-  if H.bars and H.bars.combo then
-    p:ClearAllPoints()
-    p:SetPoint("TOP", H.bars.combo, "BOTTOM", -24, -8)
-  elseif H.bars and H.bars.pow then
-    p:ClearAllPoints()
-    p:SetPoint("TOP", H.bars.pow, "BOTTOM", -24, -8)
-  else
-    p:ClearAllPoints()
-    p:SetPoint("CENTER", UIParent, "CENTER", -36, -40)
-  end
+  -- Initial position - will be repositioned by RebuildUtilityButtons
+  p:ClearAllPoints()
+  p:SetPoint("CENTER", UIParent, "CENTER", 0, -200) -- Off-screen initially
   p:SetSize(28,28)
   if p.SetFrameStrata then p:SetFrameStrata("MEDIUM") end
   p:SetFrameLevel(100) -- Ensure it's on top
   if p.SetClampedToScreen then p:SetClampedToScreen(true) end
+  p:Hide() -- Start hidden until RebuildUtilityButtons positions it
   local ptex = p:CreateTexture(nil, "ARTWORK")
   ptex:SetAllPoints(p)
   -- Use a healing potion-looking icon for the button default
@@ -464,11 +457,7 @@ function H.BuildUtilities()
   p.icon = ptex
   local pDim = p:CreateTexture(nil, "OVERLAY")
   pDim:SetAllPoints(p)
-  pDim:SetColorTexture(0,0,0,0.55)
-  pDim:Hide()
-  p.dim = pDim
-  pDim:SetAllPoints(p)
-  pDim:SetColorTexture(0,0,0,0.55)
+  pDim:SetColorTexture(0,0,0,0.35)
   pDim:Hide()
   p.dim = pDim
   local pCd = CreateFrame("Cooldown", nil, p, "CooldownFrameTemplate")
@@ -486,33 +475,28 @@ function H.BuildUtilities()
   p.cdText = pText
   p:SetAttribute("type", "item")
   AttachItemTooltip(p)
-  -- Show potion button immediately
-  p:Show()
-  
-  -- CRITICAL: Override Hide() to keep button always visible
-  local originalHideP = p.Hide
-  p.Hide = function(self) end  -- Do nothing
-  p._OriginalHide = originalHideP
+  -- Button starts hidden, RebuildUtilityButtons will show it
 
   -- Mana potion button (separate from healing potion)
   local mp = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.manaBtn = mp
-  -- Initial temp position - will be repositioned by RebuildUtilityButtons
+  -- Initial position - will be repositioned by RebuildUtilityButtons
   mp:ClearAllPoints()
-  mp:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
+  mp:SetPoint("CENTER", UIParent, "CENTER", 0, -200) -- Off-screen initially
   mp:SetSize(28,28)
   if mp.SetFrameStrata then mp:SetFrameStrata("MEDIUM") end
   mp:SetFrameLevel(100) -- Ensure it's on top
   if mp.SetClampedToScreen then mp:SetClampedToScreen(true) end
   mp:EnableMouse(true)
   mp:RegisterForClicks("AnyUp")
+  mp:Hide() -- Start hidden until RebuildUtilityButtons positions it
   local mptex = mp:CreateTexture(nil, "ARTWORK")
   mptex:SetAllPoints(mp)
   mptex:SetTexture("Interface/Icons/INV_Potion_76")
   mp.icon = mptex
   local mpDim = mp:CreateTexture(nil, "OVERLAY")
   mpDim:SetAllPoints(mp)
-  mpDim:SetColorTexture(0,0,0,0.55)
+  mpDim:SetColorTexture(0,0,0,0.35)
   mpDim:Hide()
   mp.dim = mpDim
   local mpCd = CreateFrame("Cooldown", nil, mp, "CooldownFrameTemplate")
@@ -530,15 +514,7 @@ function H.BuildUtilities()
   mp.cdText = mpText
   mp:SetAttribute("type", "item")
   AttachItemTooltip(mp)
-  -- Always show mana button immediately
-  mp:Show()
-  
-  -- CRITICAL: Override Hide() to prevent any code from hiding this button
-  local originalHide = mp.Hide
-  mp.Hide = function(self)
-    -- Do nothing - mana button must always stay visible
-  end
-  mp._OriginalHide = originalHide  -- Keep reference in case we need it
+  -- Button starts hidden, RebuildUtilityButtons will show it
   
   -- Show/hide mana button.
   -- On official Classic this should be true for mana classes (e.g. Mage),
@@ -554,14 +530,11 @@ function H.BuildUtilities()
   H.ShouldShowManaButton = ShouldShowManaButton
 
   local function UpdateManaButtonVisibility()
-    -- Always show mana button (will be grayed out if no potions)
-    mp:Show()
-    -- Rebuild layout to ensure proper positioning
+    -- RebuildUtilityButtons will handle showing/positioning
     if H.RebuildUtilityButtons then
       pcall(function() H.RebuildUtilityButtons() end)
     end
   end
-  UpdateManaButtonVisibility()
   local mpEvents = CreateFrame("Frame")
   mpEvents:RegisterEvent("PLAYER_LOGIN")
   mpEvents:RegisterEvent("UNIT_DISPLAYPOWER")
@@ -581,26 +554,20 @@ function H.BuildUtilities()
   -- Bandage button (only show if First Aid is learned)
   local bdg = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.bandageBtn = bdg
-  if H.bars and H.bars.combo then
-    bdg:ClearAllPoints()
-    bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -60, -8)
-  elseif H.bars and H.bars.pow then
-    bdg:ClearAllPoints()
-    bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -60, -8)
-  else
-    bdg:ClearAllPoints()
-    bdg:SetPoint("CENTER", UIParent, "CENTER", -72, -40)
-  end
+  -- Initial position - will be repositioned by RebuildUtilityButtons
+  bdg:ClearAllPoints()
+  bdg:SetPoint("CENTER", UIParent, "CENTER", 0, -200) -- Off-screen initially
   bdg:SetSize(28,28)
   if bdg.SetFrameStrata then bdg:SetFrameStrata("MEDIUM") end
   if bdg.SetClampedToScreen then bdg:SetClampedToScreen(true) end
+  bdg:Hide() -- Start hidden until RebuildUtilityButtons positions it
   local btex = bdg:CreateTexture(nil, "ARTWORK")
   btex:SetAllPoints(bdg)
   btex:SetTexture("Interface/Icons/INV_Misc_Bandage_Frostweave_Heavy")
   bdg.icon = btex
   local bDim = bdg:CreateTexture(nil, "OVERLAY")
   bDim:SetAllPoints(bdg)
-  bDim:SetColorTexture(0,0,0,0.55)
+  bDim:SetColorTexture(0,0,0,0.35)
   bDim:Hide()
   bdg.dim = bDim
   local bCd = CreateFrame("Cooldown", nil, bdg, "CooldownFrameTemplate")
@@ -617,14 +584,29 @@ function H.BuildUtilities()
   bdg.cdText = bText
   bdg:SetAttribute("type", "macro")
   
-  -- Check if player has First Aid profession
+  -- Check if player has First Aid profession (supports multiple locales)
   local function HasFirstAid()
+    -- First try spell-based detection (works in all locales)
+    -- Spell ID 3273 = "First Aid" passive skill
+    if IsSpellKnown and IsSpellKnown(3273) then return true end
+    if IsPlayerSpell and IsPlayerSpell(3273) then return true end
+    
+    -- Fallback: Check skill list with multiple locale names
     if not GetSkillLineInfo then return false end
+    local firstAidNames = {
+      ["First Aid"] = true,      -- English
+      ["Erste Hilfe"] = true,    -- German
+      ["Premiers soins"] = true, -- French
+      ["Primeros auxilios"] = true, -- Spanish
+      ["Primeiros Socorros"] = true, -- Portuguese
+      ["Pronto Soccorso"] = true, -- Italian
+      ["Первая помощь"] = true,  -- Russian
+    }
     local i = 1
     while true do
       local skillName, _, _, skillRank, _ = GetSkillLineInfo(i)
       if not skillName then break end
-      if skillName == "First Aid" then return skillRank and skillRank > 0 end
+      if firstAidNames[skillName] then return skillRank and skillRank > 0 end
       i = i + 1
     end
     return false
@@ -632,29 +614,18 @@ function H.BuildUtilities()
   
   bdg._hasFirstAid = HasFirstAid()
   
-  -- Show/hide bandage button based on First Aid profession
-  if bdg._hasFirstAid then
-    bdg:Show()
-  else
-    bdg:Hide()
-  end
+  -- Visibility will be handled by RebuildUtilityButtons based on _hasFirstAid
   
   -- Hearthstone
   local hs = CreateFrame("Button", nil, UIParent, "SecureActionButtonTemplate")
   H.hearthBtn = hs
-  if H.bars and H.bars.combo then
-    hs:ClearAllPoints()
-    hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 12, -8)
-  elseif H.bars and H.bars.pow then
-    hs:ClearAllPoints()
-    hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 12, -8)
-  else
-    hs:ClearAllPoints()
-    hs:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
-  end
+  -- Initial position - will be repositioned by RebuildUtilityButtons
+  hs:ClearAllPoints()
+  hs:SetPoint("CENTER", UIParent, "CENTER", 0, -200) -- Off-screen initially
   hs:SetSize(28,28)
   if hs.SetFrameStrata then hs:SetFrameStrata("MEDIUM") end
   if hs.SetClampedToScreen then hs:SetClampedToScreen(true) end
+  hs:Hide() -- Start hidden until RebuildUtilityButtons positions it
   local hst = hs:CreateTexture(nil, "ARTWORK")
   hst:SetAllPoints(hs)
   hst:SetTexture("Interface/Icons/INV_Misc_Rune_01")
@@ -796,7 +767,7 @@ function H.BuildUtilities()
         if mtex and H.manaBtn.icon then H.manaBtn.icon:SetTexture(mtex) end
         if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(false) end
         if H.manaBtn.dim then H.manaBtn.dim:Hide() end
-        H.manaBtn:Show()
+        -- Show handled by RebuildUtilityButtons
       else
         -- No mana potion found: show default icon dimmed
         H.QueueSetAttribute(H.manaBtn, "item", "")
@@ -804,7 +775,7 @@ function H.BuildUtilities()
         if H.manaBtn.icon then H.manaBtn.icon:SetTexture("Interface/Icons/INV_Potion_76") end
         if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(true) end
         if H.manaBtn.dim then H.manaBtn.dim:Show() end
-        H.manaBtn:Show()
+        -- Show handled by RebuildUtilityButtons
       end
 
       local mtotal = 0
@@ -829,24 +800,9 @@ function H.BuildUtilities()
     if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.potions then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Potion count="..total)
     end
-    -- Ensure hearthstone and bandage buttons are always shown
-    if H.hearthBtn then
-      pcall(function() H.hearthBtn:Show() end)
-    end
-    if H.bandageBtn and H.bandageBtn._hasFirstAid then
-      pcall(function() H.bandageBtn:Show() end)
-    end
-    -- Ensure racial button is shown if it exists
-    if H.racialBtn then
-      pcall(function() H.racialBtn:Show() end)
-    end
-    -- Trigger layout rebuild immediately after visibility changes
+    -- Let RebuildUtilityButtons handle all visibility and positioning
     if H.RebuildUtilityButtons then 
       pcall(function() H.RebuildUtilityButtons() end)
-    end
-    -- Force mana button to stay visible
-    if H.manaBtn then
-      pcall(function() H.manaBtn:Show() end)
     end
   end)
   -- Call updater immediately and again after delayed to ensure buttons are shown
@@ -1098,7 +1054,8 @@ function H.BuildUtilities()
       end
       b:Show()
     end
-    if H.ReanchorUtilities then pcall(function() H.ReanchorUtilities() end) end
+    -- Use RebuildUtilityButtons for positioning (ReanchorUtilities is deprecated)
+    if H.RebuildUtilityButtons then pcall(function() H.RebuildUtilityButtons() end) end
   end
   pcall(function() AddRacialUtility() end)
 
@@ -1158,23 +1115,25 @@ function H.BuildUtilities()
         btn:SetSize(buttonSize, buttonSize)
       end
     end
-    
-    -- Ensure mana button is always shown (grayed if empty)
-    if H.manaBtn then
-      H.manaBtn:Show()
-    end
 
     -- Update utility button gaps and positions
     -- Correctly center all visible buttons as a single group to prevent gaps
     -- Order: Bandage, HP-Pot, Mana-Pot, Hearth, Racial
+    
+    -- Determine which buttons should be visible (but don't show them yet!)
     local utilOrder = { H.bandageBtn, H.potionBtn, H.manaBtn, H.hearthBtn, H.racialBtn }
     local visible = {}
     for _, b in ipairs(utilOrder) do
-      -- Force show mana button before checking IsShown
-      if b == H.manaBtn and b then
-        b:Show()
+      if b then
+        -- Check if this button should be visible
+        local shouldShow = true
+        if b == H.bandageBtn and not H.bandageBtn._hasFirstAid then
+          shouldShow = false
+        end
+        if shouldShow then
+          table.insert(visible, b)
+        end
       end
-      if b and b:IsShown() then table.insert(visible, b) end
     end
 
     if #visible > 0 then
@@ -1199,16 +1158,13 @@ function H.BuildUtilities()
          baseY = offsetY
       end
 
+      -- First position all buttons, THEN show them (prevents flicker at old position)
       for i, btn in ipairs(visible) do
         btn:ClearAllPoints()
         local x = baseX + startX + ((i-1) * (buttonSize + buttonGap))
         btn:SetPoint(myPt, anchorFrame, anchorPt, x, baseY)
+        btn:Show()  -- Show AFTER positioning
       end
-    end
-    
-    -- Force mana button visible after rebuild (in case it was hidden)
-    if H.manaBtn then
-      H.manaBtn:Show()
     end
 
 
@@ -1426,31 +1382,10 @@ function H.BuildUtilities()
     ef:RegisterEvent("SPELLS_CHANGED")
     ef:RegisterEvent("PLAYER_TALENT_UPDATE")
     ef:SetScript("OnEvent", function()
-      -- Only rebuild if classCDButtons doesn't exist yet
-      -- The initial build is done above, this is only for spell changes AFTER initial build
-      if H._classCDBuilt and H.classCDButtons and #H.classCDButtons > 0 then
-        -- Just update cooldown tracking, don't rebuild buttons
-        return
-      end
-      
-      -- If for some reason we need to rebuild, destroy old buttons properly first
-      if H.classCDButtons then
-        for _, b in ipairs(H.classCDButtons) do 
-          -- Use original Hide if available
-          if b._OriginalHide then
-            b._OriginalHide(b)
-          end
-          b:ClearAllPoints()
-          b:SetParent(nil)
-        end
-      end
-      H.classCDButtons = nil
-      H._classCDBuilt = false
-      
-      -- Re-run build utilities to rebuild class cds
-      if H.BuildUtilities then
-        H._utilitiesBuilt = false  -- Allow rebuild
-        H.BuildUtilities()
+      -- Just rebuild layout, don't recreate buttons
+      -- The buttons already exist, we just need to reposition them
+      if H.RebuildUtilityButtons then
+        pcall(function() H.RebuildUtilityButtons() end)
       end
     end)
   end
@@ -1507,84 +1442,12 @@ function H.BuildUtilities()
   end
 end
 
--- Reposition and re-show utility row after layout or level-up changes
+-- DEPRECATED: Use RebuildUtilityButtons() instead
+-- This function is kept as a stub for backwards compatibility
 function H.ReanchorUtilities()
-  if InCombatLockdown and InCombatLockdown() then
-    H._pendingReanchorUtilities = true
-    return
-  end
-  if not H.potionBtn or not H.bandageBtn or not H.hearthBtn then return end
-  local p, bdg, hs = H.potionBtn, H.bandageBtn, H.hearthBtn
-  -- Anchor relative to player power/combo bars if available
-  if H.bars and H.bars.combo then
-    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.combo, "BOTTOM", -60, -8)
-    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.combo, "BOTTOM", -24, -8)
-    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.combo, "BOTTOM", 12, -8)
-  elseif H.bars and H.bars.pow then
-    bdg:ClearAllPoints(); bdg:SetPoint("TOP", H.bars.pow, "BOTTOM", -60, -8)
-    p:ClearAllPoints(); p:SetPoint("TOP", H.bars.pow, "BOTTOM", -24, -8)
-    hs:ClearAllPoints(); hs:SetPoint("TOP", H.bars.pow, "BOTTOM", 12, -8)
-  else
-    bdg:ClearAllPoints(); bdg:SetPoint("CENTER", UIParent, "CENTER", -72, -40)
-    p:ClearAllPoints(); p:SetPoint("CENTER", UIParent, "CENTER", -36, -40)
-    hs:ClearAllPoints(); hs:SetPoint("CENTER", UIParent, "CENTER", 0, -40)
-  end
-  -- Anchor mana button to the right of hearthstone
-  if H.manaBtn then
-    H.manaBtn:ClearAllPoints(); H.manaBtn:SetPoint("LEFT", hs, "RIGHT", 8, 0)
-    H.manaBtn:SetAlpha(1); H.manaBtn:SetScale(1); H.manaBtn:SetFrameStrata("MEDIUM"); H.manaBtn:SetFrameLevel(50)
-    H.manaBtn:Show()
-  end
-  -- Anchor racial button to the right of mana button (or hearthstone if no mana button)
-  if H.racialBtn then
-    if H.manaBtn and H.manaBtn:IsShown() then
-      H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("LEFT", H.manaBtn, "RIGHT", 8, 0)
-    else
-      H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("LEFT", hs, "RIGHT", 8, 0)
-    end
-    H.racialBtn:SetAlpha(1); H.racialBtn:SetScale(1); H.racialBtn:SetFrameStrata("MEDIUM"); H.racialBtn:SetFrameLevel(50)
-    H.racialBtn:Show()
-  end
-  -- Ensure visible and not "poisoned" by any prior hide logic
-  if p.SetAlpha then p:SetAlpha(1) end
-  if p.SetScale then p:SetScale(1) end
-  if p.SetFrameStrata then p:SetFrameStrata("MEDIUM") end
-  if p.SetFrameLevel then p:SetFrameLevel(50) end
-  if bdg.SetAlpha then bdg:SetAlpha(1) end
-  if bdg.SetScale then bdg:SetScale(1) end
-  if bdg.SetFrameStrata then bdg:SetFrameStrata("MEDIUM") end
-  if bdg.SetFrameLevel then bdg:SetFrameLevel(50) end
-  if hs.SetAlpha then hs:SetAlpha(1) end
-  if hs.SetScale then hs:SetScale(1) end
-  if hs.SetFrameStrata then hs:SetFrameStrata("MEDIUM") end
-  if hs.SetFrameLevel then hs:SetFrameLevel(50) end
-  -- Don't show p automatically; let the updater control visibility based on potion count
-  if bdg._hasFirstAid then bdg:Show() end; hs:Show()
-  -- Align racial and mana buttons on the utility row if present
-  if H.racialBtn then
-    if H.racialBtn.SetClampedToScreen then H.racialBtn:SetClampedToScreen(true) end
-    if H.racialBtn.SetAlpha then H.racialBtn:SetAlpha(1) end
-    if H.racialBtn.SetScale then H.racialBtn:SetScale(1) end
-    if H.racialBtn.SetFrameStrata then H.racialBtn:SetFrameStrata("MEDIUM") end
-    if H.racialBtn.SetFrameLevel then H.racialBtn:SetFrameLevel(50) end
-    local rightAnchor = (H.manaBtn and H.manaBtn.IsShown and H.manaBtn:IsShown() and H.manaBtn) or hs
-    if rightAnchor then
-      H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("LEFT", rightAnchor, "RIGHT", 8, 0); H.racialBtn:Show()
-    end
-
-    -- Fallback if the chosen anchor is off-screen for the current UIParent width.
-    local px = (UIParent and UIParent.GetWidth and UIParent:GetWidth()) or nil
-    local cx = (H.racialBtn.GetCenter and select(1, H.racialBtn:GetCenter())) or nil
-    if px and cx and (cx < 10 or cx > (px - 10)) then
-      if hs then
-        H.racialBtn:ClearAllPoints(); H.racialBtn:SetPoint("RIGHT", hs, "LEFT", -8, 0); H.racialBtn:Show()
-      end
-    end
-  end
-  if H.manaBtn and hs then
-    H.manaBtn:ClearAllPoints(); H.manaBtn:SetPoint("LEFT", hs, "RIGHT", 8, 0)
-    -- Always show mana button (will be grayed if no potions)
-    H.manaBtn:Show()
+  -- Redirect to RebuildUtilityButtons for consistent centered layout
+  if H.RebuildUtilityButtons then
+    H.RebuildUtilityButtons()
   end
 end
 

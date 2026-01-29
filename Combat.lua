@@ -584,12 +584,12 @@ function H.CheckSkull()
   end
   -- We only show skull/icons here if elite/high; multi-aggro handled in combat log
   if (HardcoreHUDDB.warnings.levelElite and hostile and (elite or high)) then
-    H.skull:Show()
+    if H.skull then H.skull:Show() end
     if H.eliteTextFrame then H.eliteTextFrame:Show() end
     if H.EliteAttentionText then H.EliteAttentionText:Show() end
     if H.eliteIcons then for _,ic in ipairs(H.eliteIcons) do ic:Show() end end
   else
-    H.skull:Hide()
+    if H.skull then H.skull:Hide() end
     -- Hide visuals only if multi-aggro not active
     if not H._multiAggroActive then
       if H.EliteAttentionText then H.EliteAttentionText:Hide() end
