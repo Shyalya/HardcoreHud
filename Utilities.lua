@@ -797,7 +797,7 @@ function H.BuildUtilities()
       end
       if H.manaBtn.countText then H.manaBtn.countText:SetText(mtotal) end
     end
-    if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.potions then
+    if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.potions then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Potion count="..total)
     end
     -- Let RebuildUtilityButtons handle all visibility and positioning
@@ -1187,7 +1187,7 @@ function H.BuildUtilities()
     -- Apply offset relative to the calculated CD bar position
     -- Note: independent offsets for utilities are handled in the block above.
     
-    if HardcoreHUDDB and HardcoreHUDDB.debug then
+    if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.utilities then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Utility buttons rebuilt: size=" ..buttonSize.. " gap=" ..buttonGap.. " independent=" ..(independent and "YES" or "NO"))
     end
   end
@@ -1424,7 +1424,7 @@ function H.BuildUtilities()
               end
               GameTooltip:Show()
             end
-            if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.tooltips then
+            if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.tooltips then
               DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] HoverScan tooltip for spellID="..btn.spellID)
             end
           end
@@ -2239,7 +2239,7 @@ function H.InitReminders()
               local wasBlacklisted = isBlacklisted()
               local isUtility = (subtype == "Elixir") and IsUtilityElixirName(lname, id)
               local eligibleElixir = (subtype ~= "Elixir") or IsEligibleElixirBySpell(id)
-              if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.reminders then
+              if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.reminders then
                 DEFAULT_CHAT_FRAME:AddMessage(string.format("[HardcoreHUD] Scan %s id=%s name=%s util=%s eligible=%s blacklisted=%s",
                   tostring(subtype), tostring(id), tostring(name), tostring(isUtility), tostring(eligibleElixir), tostring(wasBlacklisted)))
               end
@@ -2253,7 +2253,7 @@ function H.InitReminders()
                 else
                   -- Include any food; whitelist is optional preference
                   table.insert(found, {id=id, texture=texture})
-                  if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.reminders then
+                  if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.reminders then
                     DEFAULT_CHAT_FRAME:AddMessage(string.format("[HardcoreHUD] Added candidate %s id=%s", tostring(subtype), tostring(id)))
                   end
                   if limit and #found >= limit then return found end
@@ -2266,7 +2266,7 @@ function H.InitReminders()
                     -- skip non-battle/guardian elixirs
                   else
                 table.insert(found, {id=id, texture=texture})
-                if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.reminders then
+                if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.reminders then
                   DEFAULT_CHAT_FRAME:AddMessage(string.format("[HardcoreHUD] Added candidate %s id=%s", tostring(subtype), tostring(id)))
                 end
                 if limit and #found >= limit then return found end
@@ -2700,7 +2700,7 @@ function H.InitReminders()
     rf.text:SetText("")
     -- Ensure the reminder frame is shown when there are actionable entries (combat-safe)
     if not rf:IsShown() and not InCombatLockdown() then pcall(function() rf:Show() end) end
-    if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.reminders then
+    if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.reminders then
       local miss = MissingCategories(); DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] Missing: "..table.concat(miss, ", "))
     end
   end
@@ -2816,6 +2816,44 @@ function H.InitReminders()
     Force(H.racialBtn, 32)
     Force(H.manaBtn, 64)
     print("[HardcoreHUD] Forced utility buttons to center. Use /hhdbg to inspect.")
+  end
+
+  -- Debug command to check shield tracking state
+  SLASH_HHSHIELD1 = "/hhshield"
+  SlashCmdList["HHSHIELD"] = function()
+    print("[HardcoreHUD] Shield Tracking Debug:")
+    
+    -- Check if shieldState exists
+    if not H.shieldState then
+      print("  shieldState: NIL (not initialized)")
+    else
+      print(string.format("  active: %s", tostring(H.shieldState.active)))
+      print(string.format("  currentAbsorb: %s", tostring(H.shieldState.currentAbsorb)))
+      print(string.format("  maxAbsorb: %s", tostring(H.shieldState.maxAbsorb)))
+      print(string.format("  spellId: %s", tostring(H.shieldState.spellId)))
+    end
+    
+    -- Check if shieldBorder frame exists
+    if not H.shieldBorder then
+      print("  shieldBorder frame: NIL")
+    else
+      print(string.format("  shieldBorder frame: %s", H.shieldBorder:IsShown() and "SHOWN" or "HIDDEN"))
+    end
+    
+    -- List all current buffs to help find the PW:S buff name
+    print("  Current buffs:")
+    for i = 1, 40 do
+      local name, icon, count, debuffType, duration, expirationTime, unitCaster = UnitBuff("player", i)
+      if not name then break end
+      print(string.format("    [%d] '%s' (caster=%s)", i, name, tostring(unitCaster)))
+    end
+    
+    -- Manual check for shield
+    if H.CheckShieldState then
+      print("  Running CheckShieldState()...")
+      H.CheckShieldState()
+      print(string.format("  After check - active: %s", tostring(H.shieldState and H.shieldState.active)))
+    end
   end
 
   -- Test/Debug Range Display directly
@@ -2985,7 +3023,7 @@ do
     lastCastTime = GetTime()
     EnsureBars()
     if H.bars.fs then H.bars.fs:Show() end
-    if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.ticker then
+    if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.ticker then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] 5s rule started")
     end
   end
@@ -3333,7 +3371,7 @@ if not H.ShowUnifiedTooltip then
         ok = true
       end
       if ok and GameTooltip:IsVisible() then
-        if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.tooltips then
+        if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.tooltips then
           DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] GameTooltip shown for spellID="..spellID)
         end
         return
@@ -3347,7 +3385,7 @@ if not H.ShowUnifiedTooltip then
     local h = 30 + (desc and desc ~= "" and math.min(60, simple.text2:GetStringHeight()+8) or 0)
     simple:SetHeight(h)
     simple:Show()
-    if HardcoreHUDDB and HardcoreHUDDB.debug and HardcoreHUDDB.debug.tooltips then
+    if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.tooltips then
       DEFAULT_CHAT_FRAME:AddMessage("[HardcoreHUD] SimpleTooltip used for spellID="..spellID)
     end
   end
@@ -3446,127 +3484,266 @@ do
   end
 end
 
--- Thanks for Buff System (auto-thanks buff givers outside group - uses emotes instead of chat)
--- NOTE: Disabled by default as DoEmote can cause taint in certain situations
+-- Thanks for Buff System - DISABLED
+-- This feature has been disabled because DoEmote/SendChatMessage cause taint
+-- and protected function errors in Classic Era. The WoW API does not allow
+-- addons to send chat messages or emotes automatically without causing issues.
 function H.InitThanksBuff()
-  if H._thanksBuff then return end
+  -- Feature disabled - do nothing
+  -- The emote/chat APIs are protected and cause ADDON_ACTION_BLOCKED errors
+  HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or { enabled = false }
+  HardcoreHUDDB.thanksBuff.enabled = false  -- Force disabled
+end
+
+-- ================= Auto-Logout on Inactivity (AFK Protection) ===================
+-- Automatically logs out after X seconds of no activity to protect hardcore characters
+do
+  -- NOTE: HardcoreHUDDB.autoLogout is initialized later after ADDON_LOADED
+  -- to respect SavedVariables. See the PLAYER_LOGIN event handler below.
   
-  HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or {
-    enabled = false,  -- Disabled by default - DoEmote can cause taint/protected function errors
-    emote = "thank",  -- Emote to send (e.g. "thank", "laugh", "wave")
-    onlyOutsideGroup = true
+  H._afkState = H._afkState or {
+    lastActivity = GetTime(),
+    warningShown = false,
+    logoutPending = false,
   }
   
-  local buffTracking = {}
-  local emoteQueue = {}  -- Queue for emotes to send after combat
+  -- Warning overlay frame
+  local function BuildAFKWarningFrame()
+    if H.afkWarningFrame then return end
+    
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(400, 100)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 150)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetFrameLevel(500)
+    f:Hide()
+    
+    -- Background
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(f)
+    bg:SetColorTexture(0.1, 0, 0, 0.9)
+    
+    -- Red border (pulsing)
+    local borderSize = 3
+    local borders = {}
+    borders[1] = f:CreateTexture(nil, "BORDER"); borders[1]:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0); borders[1]:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0); borders[1]:SetHeight(borderSize); borders[1]:SetColorTexture(1, 0.2, 0.2, 1)
+    borders[2] = f:CreateTexture(nil, "BORDER"); borders[2]:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0); borders[2]:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0); borders[2]:SetHeight(borderSize); borders[2]:SetColorTexture(1, 0.2, 0.2, 1)
+    borders[3] = f:CreateTexture(nil, "BORDER"); borders[3]:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0); borders[3]:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0); borders[3]:SetWidth(borderSize); borders[3]:SetColorTexture(1, 0.2, 0.2, 1)
+    borders[4] = f:CreateTexture(nil, "BORDER"); borders[4]:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0); borders[4]:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0); borders[4]:SetWidth(borderSize); borders[4]:SetColorTexture(1, 0.2, 0.2, 1)
+    f.borders = borders
+    
+    -- Title
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", f, "TOP", 0, -15)
+    title:SetText("⚠ AFK AUTO-LOGOUT ⚠")
+    title:SetTextColor(1, 0.3, 0.3, 1)
+    if STANDARD_TEXT_FONT then title:SetFont(STANDARD_TEXT_FONT, 20, "OUTLINE") end
+    f.title = title
+    
+    -- Countdown text
+    local countdown = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    countdown:SetPoint("CENTER", f, "CENTER", 0, 0)
+    countdown:SetText("Logout in 10s...")
+    countdown:SetTextColor(1, 1, 1, 1)
+    if STANDARD_TEXT_FONT then countdown:SetFont(STANDARD_TEXT_FONT, 24, "OUTLINE") end
+    f.countdown = countdown
+    
+    -- Info text
+    local info = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    info:SetPoint("BOTTOM", f, "BOTTOM", 0, 15)
+    info:SetText("Move or press any key to cancel")
+    info:SetTextColor(0.7, 0.7, 0.7, 1)
+    f.info = info
+    
+    -- Pulse animation
+    f._pulseAcc = 0
+    f:SetScript("OnUpdate", function(self, dt)
+      if not self:IsShown() then return end
+      self._pulseAcc = (self._pulseAcc or 0) + dt
+      local pulse = 0.6 + 0.4 * math.sin(self._pulseAcc * 6)
+      for _, b in ipairs(self.borders) do
+        b:SetAlpha(pulse)
+      end
+    end)
+    
+    H.afkWarningFrame = f
+  end
   
-  local function CheckBuffs()
-    if not (HardcoreHUDDB.thanksBuff and HardcoreHUDDB.thanksBuff.enabled) then return end
-    
-    local now = GetTime()
-    local inGroup = IsInGroup and IsInGroup() or false
-    
-    -- Check all buffs on player
-    local i = 1
-    while true do
-      local name, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, nameplateShowPersonal, spellId = UnitBuff("player", i)
-      if not name then break end
-      
-      if unitCaster and spellId then
-        local buffKey = spellId .. "_" .. (unitCaster or "unknown")
-        
-        -- Skip if we already thanked for this buff
-        if not buffTracking[buffKey] then
-          buffTracking[buffKey] = now
-          
-          -- Check if caster is outside group
-          if unitCaster and unitCaster ~= "" then
-            local isInGroup = false
-            if inGroup and HardcoreHUDDB.thanksBuff.onlyOutsideGroup then
-              -- Check if unitCaster is in our group (Classic API)
-              local numMembers = GetNumGroupMembers and GetNumGroupMembers() or 0
-              for j = 1, numMembers do
-                local unit = IsInRaid() and ("raid"..j) or ("party"..j)
-                if UnitExists(unit) and UnitIsUnit(unit, unitCaster) then
-                  isInGroup = true
-                  break
-                end
-              end
-              -- Also check if it's self-cast
-              if UnitIsUnit("player", unitCaster) then
-                isInGroup = true
-              end
-            end
-            
-            -- Queue emote if outside group (or if onlyOutsideGroup is disabled)
-            -- Emotes will be sent after combat ends
-            if not isInGroup or not HardcoreHUDDB.thanksBuff.onlyOutsideGroup then
-              table.insert(emoteQueue, HardcoreHUDDB.thanksBuff.emote)
-            end
-          end
-        end
-      end
-      
-      i = i + 1
-    end
-    
-    -- Clean up old buff tracking (keep for 10 minutes)
-    for key, time in pairs(buffTracking) do
-      if now - time > 600 then
-        buffTracking[key] = nil
-      end
+  -- Reset activity timer
+  function H.ResetAFKTimer()
+    H._afkState.lastActivity = GetTime()
+    H._afkState.warningShown = false
+    H._afkState.logoutPending = false
+    if H.afkWarningFrame then
+      H.afkWarningFrame:Hide()
     end
   end
   
-  -- Create update frame
-  local uf = CreateFrame("Frame")
-  H._thanksBuff = uf
-  local acc = 0
-  local wasInCombat = false
-  local emoteDelay = 0
-  uf:SetScript("OnUpdate", function(_, dt)
-    acc = acc + dt
-    if acc >= 1.0 then  -- Check once per second
-      acc = 0
-      CheckBuffs()
-      
-      -- Track combat state changes
-      local nowInCombat = InCombatLockdown()
-      if wasInCombat and not nowInCombat then
-        -- Just left combat, set delay before processing emotes
-        emoteDelay = 2.0
-      end
-      wasInCombat = nowInCombat
-      
-      -- If we have emotes queued and not in combat, start processing them
-      if #emoteQueue > 0 and not nowInCombat and emoteDelay <= 0 then
-        emoteDelay = 0.5  -- Small delay before first emote
+  -- Activity detection events
+  local activityFrame = CreateFrame("Frame")
+  activityFrame:RegisterEvent("PLAYER_STARTED_MOVING")
+  activityFrame:RegisterEvent("PLAYER_STOPPED_MOVING")
+  activityFrame:RegisterEvent("UNIT_SPELLCAST_START")
+  activityFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+  activityFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+  activityFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+  activityFrame:RegisterEvent("LOOT_OPENED")
+  activityFrame:RegisterEvent("MERCHANT_SHOW")
+  activityFrame:RegisterEvent("BANKFRAME_OPENED")
+  activityFrame:RegisterEvent("MAIL_SHOW")
+  activityFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
+  activityFrame:RegisterEvent("TRADE_SHOW")
+  activityFrame:RegisterEvent("QUEST_DETAIL")
+  activityFrame:RegisterEvent("GOSSIP_SHOW")
+  -- Combat events intentionally NOT registered - AFK logout runs even in combat for hardcore safety
+  activityFrame:RegisterEvent("CHAT_MSG_SAY")
+  activityFrame:RegisterEvent("CHAT_MSG_YELL")
+  activityFrame:RegisterEvent("CHAT_MSG_PARTY")
+  activityFrame:RegisterEvent("CHAT_MSG_GUILD")
+  activityFrame:RegisterEvent("CHAT_MSG_WHISPER")
+  activityFrame:RegisterEvent("PLAYER_LOGIN")
+  activityFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+  
+  activityFrame:SetScript("OnEvent", function(self, event, unit, ...)
+    -- Initialize autoLogout settings on login (after SavedVariables load)
+    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+      HardcoreHUDDB.autoLogout = HardcoreHUDDB.autoLogout or {}
+      if HardcoreHUDDB.autoLogout.enabled == nil then HardcoreHUDDB.autoLogout.enabled = false end  -- Default OFF for safety
+      if HardcoreHUDDB.autoLogout.timeout == nil then HardcoreHUDDB.autoLogout.timeout = 30 end
+      if HardcoreHUDDB.autoLogout.warningTime == nil then HardcoreHUDDB.autoLogout.warningTime = 10 end
+      -- Reset activity timer on login
+      H._afkState.lastActivity = GetTime()
+      if HardcoreHUDDB.autoLogout.enabled then
+        print("|cff00ff00[HardcoreHUD] AFK Auto-Logout active|r - " .. HardcoreHUDDB.autoLogout.timeout .. "s timeout")
       end
     end
     
-    -- Process queued emotes with delay (only when not in combat)
-    if emoteDelay > 0 then
-      emoteDelay = emoteDelay - dt
-      if emoteDelay <= 0 and #emoteQueue > 0 then
-        -- Double-check we're not in combat before emoting
-        if not InCombatLockdown() then
-          local emote = table.remove(emoteQueue, 1)
-          if emote then
-            pcall(DoEmote, emote)
+    -- Filter unit events to player only
+    if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+      if unit ~= "player" then return end
+    end
+    
+    -- Reset on any activity
+    H.ResetAFKTimer()
+  end)
+  
+  -- Main AFK check loop
+  local afkCheckFrame = CreateFrame("Frame")
+  local checkAcc = 0
+  afkCheckFrame:SetScript("OnUpdate", function(self, dt)
+    checkAcc = checkAcc + dt
+    if checkAcc < 0.5 then return end
+    checkAcc = 0
+    
+    -- Ensure autoLogout table exists
+    if not HardcoreHUDDB then return end
+    local cfg = HardcoreHUDDB.autoLogout
+    if not cfg or not cfg.enabled then
+      -- Don't hide if we're in test mode
+      if H._afkTestMode then return end
+      if H.afkWarningFrame then H.afkWarningFrame:Hide() end
+      return
+    end
+    
+    -- Ensure lastActivity is set
+    if not H._afkState or not H._afkState.lastActivity then
+      H._afkState = H._afkState or {}
+      H._afkState.lastActivity = GetTime()
+      return
+    end
+    
+    -- Don't trigger if dead/ghost
+    if UnitIsDead("player") or UnitIsGhost("player") then
+      H.ResetAFKTimer()
+      return
+    end
+    
+    local now = GetTime()
+    local elapsed = now - (H._afkState.lastActivity or now)
+    local timeout = cfg.timeout or 30
+    local warningTime = cfg.warningTime or 10
+    local remaining = timeout - elapsed
+    
+    -- Show warning
+    if remaining <= warningTime and remaining > 0 then
+      BuildAFKWarningFrame()
+      if H.afkWarningFrame then
+        H.afkWarningFrame:Show()
+        H.afkWarningFrame.countdown:SetText(string.format("Logout in %.0fs...", remaining))
+        H._afkState.warningShown = true
+        
+        -- Play warning sound once per second
+        if not H._afkState.lastSoundTime or (now - H._afkState.lastSoundTime) >= 1 then
+          H._afkState.lastSoundTime = now
+          if PlaySoundFile then
+            PlaySoundFile("Sound/Interface/RaidWarning.wav", "Master")
           end
-          -- Schedule next emote if more in queue
-          if #emoteQueue > 0 then
-            emoteDelay = 0.5  -- Wait 500ms between emotes
-          end
-        else
-          -- Got back into combat, wait longer
-          emoteDelay = 2.0
         end
+      end
+    elseif remaining <= 0 and not H._afkState.logoutPending then
+      -- Time's up - initiate logout
+      H._afkState.logoutPending = true
+      if H.afkWarningFrame then
+        H.afkWarningFrame.countdown:SetText("Logging out NOW!")
+      end
+      print("|cffff0000[HardcoreHUD] AFK timeout - logging out!|r")
+      -- Use Logout() function - starts 20 second logout timer
+      if Logout then
+        Logout()
       end
     end
   end)
-  uf:RegisterEvent("PLAYER_LOGIN")
-  uf:SetScript("OnEvent", function()
-    buffTracking = {}  -- Reset on login
-  end)
+  
+  -- Slash command to toggle
+  SLASH_HHAFK1 = "/hhafk"
+  SlashCmdList["HHAFK"] = function(msg)
+    local args = {}
+    for t in string.gmatch(msg or "", "[^%s]+") do table.insert(args, t) end
+    local cmd = string.lower(args[1] or "")
+    
+    if cmd == "on" then
+      HardcoreHUDDB.autoLogout.enabled = true
+      print("|cff00ff00[HardcoreHUD] AFK Auto-Logout ENABLED|r - " .. (HardcoreHUDDB.autoLogout.timeout or 30) .. "s timeout")
+      H.ResetAFKTimer()
+    elseif cmd == "off" then
+      HardcoreHUDDB.autoLogout.enabled = false
+      print("|cffff0000[HardcoreHUD] AFK Auto-Logout DISABLED|r")
+      if H.afkWarningFrame then H.afkWarningFrame:Hide() end
+    elseif cmd == "time" and tonumber(args[2]) then
+      local t = tonumber(args[2])
+      if t >= 10 and t <= 300 then
+        HardcoreHUDDB.autoLogout.timeout = t
+        print("[HardcoreHUD] AFK timeout set to " .. t .. " seconds")
+      else
+        print("[HardcoreHUD] Timeout must be between 10 and 300 seconds")
+      end
+    elseif cmd == "test" then
+      -- Test the warning - set test mode flag to prevent auto-hide
+      H._afkTestMode = true
+      BuildAFKWarningFrame()
+      if H.afkWarningFrame then
+        H.afkWarningFrame:Show()
+        H.afkWarningFrame.countdown:SetText("TEST - Logout in 5s...")
+        print("[HardcoreHUD] Showing AFK warning (test mode - 5 seconds)")
+        -- Play the warning sound
+        if PlaySoundFile then
+          PlaySoundFile("Sound/Interface/RaidWarning.wav", "Master")
+        end
+        C_Timer.After(5, function()
+          H._afkTestMode = false
+          if H.afkWarningFrame then H.afkWarningFrame:Hide() end
+          print("[HardcoreHUD] Test complete")
+        end)
+      end
+    else
+      HardcoreHUDDB.autoLogout = HardcoreHUDDB.autoLogout or { enabled = true, timeout = 30, warningTime = 10 }
+      local status = HardcoreHUDDB.autoLogout.enabled and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+      print("[HardcoreHUD] AFK Auto-Logout: " .. status)
+      print("  /hhafk on - Enable auto-logout")
+      print("  /hhafk off - Disable auto-logout")
+      print("  /hhafk time <seconds> - Set timeout (10-300)")
+      print("  /hhafk test - Test warning display")
+      print("  Current timeout: " .. (HardcoreHUDDB.autoLogout.timeout or 30) .. "s")
+    end
+  end
 end

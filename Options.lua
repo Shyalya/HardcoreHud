@@ -721,61 +721,12 @@ end
     if H.UpdateReminders then H.UpdateReminders() end
   end)
 
-  -- Thanks for Buff System
-  HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or { enabled = true, onlyOutsideGroup = true, message = "Thanks for the buff!" }
-  
-  local tbTitle = panelRemind:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  tbTitle:SetPoint("TOPLEFT", rCore, "BOTTOMLEFT", 0, -20)
-  tbTitle:SetText("Thanks for Buff")
-  tbTitle:SetDrawLayer("OVERLAY")
-
-  local tbEnable = SafeCheckButton("HardcoreHUDThanksBuff", panelRemind, "OptionsCheckButtonTemplate")
-  tbEnable:SetPoint("TOPLEFT", tbTitle, "BOTTOMLEFT", 0, -8)
-  tbEnable:SetChecked(HardcoreHUDDB.thanksBuff.enabled ~= false)
-  if _G[tbEnable:GetName().."Text"] then _G[tbEnable:GetName().."Text"]:SetText("Auto-thank buff givers") end
-  tbEnable:SetFrameStrata("FULLSCREEN_DIALOG")
-  tbEnable:SetFrameLevel(panelRemind:GetFrameLevel()+1)
-  tbEnable:SetScript("OnClick", function(self)
-    HardcoreHUDDB.thanksBuff.enabled = self:GetChecked()
-    if not H._thanksBuff then H.InitThanksBuff() end
-    print("HardcoreHUD: Thanks for Buff "..(self:GetChecked() and "ON" or "OFF"))
-  end)
-
-  local tbGroupOnly = SafeCheckButton("HardcoreHUDThanksBuffGroup", panelRemind, "OptionsCheckButtonTemplate")
-  tbGroupOnly:SetPoint("TOPLEFT", tbEnable, "BOTTOMLEFT", 0, -8)
-  tbGroupOnly:SetChecked(HardcoreHUDDB.thanksBuff.onlyOutsideGroup ~= false)
-  if _G[tbGroupOnly:GetName().."Text"] then _G[tbGroupOnly:GetName().."Text"]:SetText("Only thank outside group") end
-  tbGroupOnly:SetFrameStrata("FULLSCREEN_DIALOG")
-  tbGroupOnly:SetFrameLevel(panelRemind:GetFrameLevel()+1)
-  tbGroupOnly:SetScript("OnClick", function(self)
-    HardcoreHUDDB.thanksBuff.onlyOutsideGroup = self:GetChecked()
-    print("HardcoreHUD: Only outside group "..(self:GetChecked() and "ON" or "OFF"))
-  end)
-
-  local tbMsg = CreateFrame("EditBox", "HardcoreHUDThankBuffMsg", panelRemind)
-  if tbMsg then
-    tbMsg:SetSize(200, 20)
-    tbMsg:SetPoint("TOPLEFT", tbGroupOnly, "BOTTOMLEFT", 0, -12)
-    pcall(function() tbMsg:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile=true, tileSize=16, edgeSize=8, insets={left=2,right=2,top=2,bottom=2} }) end)
-    pcall(function() tbMsg:SetBackdropColor(0, 0, 0, 0.8) end)
-    pcall(function() tbMsg:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.5) end)
-    pcall(function() tbMsg:SetFont("Fonts/FRIZQT__.TTF", 11) end)
-    tbMsg:SetText(HardcoreHUDDB.thanksBuff.message or "Thanks for the buff!")
-    tbMsg:SetScript("OnEnterPressed", function(self)
-      HardcoreHUDDB.thanksBuff.message = self:GetText()
-      print("HardcoreHUD: Thanks message set to: " .. self:GetText())
-      self:ClearFocus()
-    end)
-    tbMsg:SetScript("OnEscapePressed", function(self)
-      self:SetText(HardcoreHUDDB.thanksBuff.message or "Thanks for the buff!")
-      self:ClearFocus()
-    end)
-  end
-
-  local tbMsgLabel = panelRemind:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  tbMsgLabel:SetPoint("BOTTOMLEFT", tbMsg, "TOPLEFT", 0, 4)
-  tbMsgLabel:SetText("Thank message:")
-  tbMsgLabel:SetDrawLayer("OVERLAY")
+  -- Thanks for Buff System - DISABLED
+  -- This feature has been permanently disabled because SendChatMessage/DoEmote
+  -- cause ADDON_ACTION_BLOCKED errors in Classic Era. The WoW API protects
+  -- these functions and addons cannot use them without causing taint.
+  HardcoreHUDDB.thanksBuff = HardcoreHUDDB.thanksBuff or { enabled = false }
+  HardcoreHUDDB.thanksBuff.enabled = false  -- Force disabled to prevent errors
 
   -- Emergency CDs pulse toggle
   HardcoreHUDDB.emergency = HardcoreHUDDB.emergency or { enabled = true, hpThreshold = 0.50 }

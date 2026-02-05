@@ -567,6 +567,9 @@ if H.InitBreathWarning then H.InitBreathWarning() end
 HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
 if HardcoreHUDDB.warnings.criticalOverlayEnabled == nil then HardcoreHUDDB.warnings.criticalOverlayEnabled = true end
 
+-- Shield (PW:S) tracking defaults
+HardcoreHUDDB.shield = HardcoreHUDDB.shield or { enabled = true, showText = false }
+
 -- Warnings system defaults
 if HardcoreHUDDB.warnings.enabled == nil then HardcoreHUDDB.warnings.enabled = true end
 
@@ -657,7 +660,7 @@ HardcoreHUDDB = HardcoreHUDDB or {
   warnings = { criticalHP = true, multiAggro = true, levelElite = true, multiAggroThreshold = 2 },
   audio = { enabled = true },
   gtfo = { enabled = true, highDamage = true, lowDamage = true, fallAlert = true, volume = 1.0, lastAlert = 0 },
-  thanksBuff = { enabled = true, onlyOutsideGroup = true, message = "Thanks for the buff!" },
+  thanksBuff = { enabled = false, onlyOutsideGroup = true, message = "Thanks for the buff!" },
   targetMarks = { enabled = true, locked = false, pos = { x = 0, y = -280 } },
   leveling = { enabled = true, locked = false, pos = { x = 0, y = -400 }, showXPBar = true, showRate = true, showTimeToLevel = true, showRested = true, showSessionTime = true },
   lock = true,
@@ -665,7 +668,7 @@ HardcoreHUDDB = HardcoreHUDDB or {
 -- Ensure defaults exist when upgrading from older SavedVariables
 if HardcoreHUDDB.lock == nil then HardcoreHUDDB.lock = true end
 if HardcoreHUDDB.gtfo == nil then HardcoreHUDDB.gtfo = { enabled = true, highDamage = true, lowDamage = true, fallAlert = true, volume = 1.0, lastAlert = 0 } end
-if HardcoreHUDDB.thanksBuff == nil then HardcoreHUDDB.thanksBuff = { enabled = true, onlyOutsideGroup = true, message = "Thanks for the buff!" } end
+if HardcoreHUDDB.thanksBuff == nil then HardcoreHUDDB.thanksBuff = { enabled = false, onlyOutsideGroup = true, message = "Thanks for the buff!" } end
 if HardcoreHUDDB.targetMarks == nil then HardcoreHUDDB.targetMarks = { enabled = true, locked = false, pos = { x = 0, y = -280 } } end
 if HardcoreHUDDB.leveling == nil then HardcoreHUDDB.leveling = { enabled = true, locked = false, pos = { x = 0, y = -400 }, showXPBar = true, showRate = true, showTimeToLevel = true, showRested = true, showSessionTime = true } end
 
@@ -778,11 +781,7 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if H.InitThanksBuff then H.InitThanksBuff() end
     if H.InitGTFO then H.InitGTFO() end
     if H.BuildGTFOFrame then H.BuildGTFOFrame() end
-    H._sessionStartTime = GetTime()
-    -- Store starting XP for session rate calculation
-    H._sessionStartXP = UnitXP("player") or 0
-    H._sessionStartLevel = UnitLevel("player") or 1
-    H._sessionTotalXPGained = 0
+    -- Session time is now managed by InitLevelingTracker (persists across reloads)
     -- Rebuild utility buttons to apply saved position
     if H.RebuildUtilityButtons then
       C_Timer.After(0.1, function()
@@ -1110,7 +1109,7 @@ function H.UpdateOOMOverlay(force)
       if not ok and HardcoreHUDDB.debug then print("HardcoreHUD OOM Show error:", err) end
     end
   else
-    if HardcoreHUDDB.debug and HardcoreHUDDB.debug.oom then
+    if type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.oom then
       if pct > thr then
         print(string.format("HardcoreHUD OOM: pct=%.2f above thr=%.2f", pct, thr))
       elseif considerRecovery and readyPotion then

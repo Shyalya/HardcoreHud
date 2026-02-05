@@ -787,10 +787,10 @@ H._leashState = H._leashState or {
 }
 
 -- COMBAT_LOG hook for tracking hits and resetting timer
-local function OnCombatLogEvent()
-  -- Classic Era uses CombatLogGetCurrentEventInfo()
-  local timestamp, eventType, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags,
-        destGUID, destName, destFlags, destRaidFlags = CombatLogGetCurrentEventInfo()
+local function OnCombatLogEvent(...)
+  -- Classic Era 1.15.x: args come directly from event via ..., not CombatLogGetCurrentEventInfo()
+  local timestamp, eventType, sourceGUID, sourceName, sourceFlags,
+        destGUID, destName, destFlags = ...
   
   -- Only track events where player hits their current target
   local playerGUID = UnitGUID("player")
@@ -831,9 +831,9 @@ end
 -- Register combat log event
 local leashCombatLogFrame = CreateFrame("Frame")
 leashCombatLogFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-leashCombatLogFrame:SetScript("OnEvent", function(self, event)
+leashCombatLogFrame:SetScript("OnEvent", function(self, event, ...)
   if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-    OnCombatLogEvent()
+    OnCombatLogEvent(...)
   end
 end)
 
