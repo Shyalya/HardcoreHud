@@ -276,17 +276,30 @@ local function SafeFindInBags(fn)
 end
 
 -- Safe GetItemCooldown wrapper for clients that lack the API
+-- In Classic Era, potions share a 2-minute cooldown category
+-- GetItemCooldown may return enabled=0 for category cooldowns, but we can detect
+-- active cooldowns by checking if start > 0 and duration > 1.5 (GCD threshold)
 local function GetItemCooldownSafe(itemID)
-  if not itemID then return 0, 0, 0 end
+  if not itemID then return 0, 0, 1 end
   if GetItemCooldown then
     local s, d, e = GetItemCooldown(itemID)
     -- Ensure we return valid numbers (some clients return nil)
     s = s or 0
     d = d or 0
     e = e or 0
+    -- In Classic Era, 'enabled' can be 0 for items with shared cooldowns (potions)
+    -- Detect active cooldown by checking start/duration values directly
+    -- Duration > 1.5 distinguishes real cooldowns from GCD
+    if s > 0 and d > 1.5 then
+      -- There's a real cooldown running
+      e = 1
+    elseif e == 0 or e == nil then
+      -- No cooldown or GCD only
+      e = 1
+    end
     return s, d, e
   end
-  return 0, 0, 0
+  return 0, 0, 1
 end
 
 local function findHighestPotion()
@@ -1292,12 +1305,30 @@ function H.BuildUtilities()
         end
       end
       -- Potion cooldown (spiral + dim + big number)
-      if H.potionBtn and H.potionBtn.itemID then
-        local ps, pd, pe = GetItemCooldownSafe(H.potionBtn.itemID)
-        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
-        if onCooldown then
-          local prem = (ps + pd) - GetTime()
-          if prem < 0 then prem = 0 end
+      -- In Classic Era, potions share a 2-minute category cooldown
+      -- We check any known healing potion ID to get the shared cooldown state
+      if H.potionBtn then
+        local checkID = H.potionBtn.itemID
+        -- Fallback: check a common potion ID if no specific item bound
+        if not checkID then
+          for id, _ in pairs(HEAL_POTION_RANKS) do
+            if GetItemCount and GetItemCount(id) > 0 then checkID = id; break end
+          end
+        end
+        local ps, pd, pe = 0, 0, 1
+        if checkID then
+          ps, pd, pe = GetItemCooldownSafe(checkID)
+        end
+        -- Detect active cooldown: duration > 1.5s (not just GCD) and remaining > 0
+        local prem = 0
+        local onCooldown = false
+        if ps and pd and ps > 0 and pd > 1.5 then
+          prem = (ps + pd) - GetTime()
+          if prem > 0 then
+            onCooldown = true
+          end
+        end
+        if onCooldown and prem > 0 then
           if H.potionBtn.cooldown and H.potionBtn.cooldown.SetCooldown then 
             H.potionBtn.cooldown:SetCooldown(ps, pd)
             H.potionBtn.cooldown:Show() 
@@ -1313,12 +1344,29 @@ function H.BuildUtilities()
         end
       end
       -- Mana potion cooldown (spiral + dim + big number)
-      if H.manaBtn and H.manaBtn.itemID then
-        local ps, pd, pe = GetItemCooldownSafe(H.manaBtn.itemID)
-        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
-        if onCooldown then
-          local prem = (ps + pd) - GetTime()
-          if prem < 0 then prem = 0 end
+      -- Mana potions share the same 2-minute category cooldown as healing potions
+      if H.manaBtn then
+        local checkID = H.manaBtn.itemID
+        -- Fallback: check a common mana potion ID if no specific item bound
+        if not checkID then
+          for id, _ in pairs(MANA_POTION_RANKS) do
+            if GetItemCount and GetItemCount(id) > 0 then checkID = id; break end
+          end
+        end
+        local ps, pd, pe = 0, 0, 1
+        if checkID then
+          ps, pd, pe = GetItemCooldownSafe(checkID)
+        end
+        -- Detect active cooldown: duration > 1.5s and remaining > 0
+        local prem = 0
+        local onCooldown = false
+        if ps and pd and ps > 0 and pd > 1.5 then
+          prem = (ps + pd) - GetTime()
+          if prem > 0 then
+            onCooldown = true
+          end
+        end
+        if onCooldown and prem > 0 then
           if H.manaBtn.cooldown and H.manaBtn.cooldown.SetCooldown then 
             H.manaBtn.cooldown:SetCooldown(ps, pd)
             H.manaBtn.cooldown:Show() 
@@ -1334,12 +1382,19 @@ function H.BuildUtilities()
         end
       end
       -- Hearthstone cooldown (spiral + dim + big number)
-      if H.hearthBtn and H.hearthBtn.itemID then
-        local ps, pd, pe = GetItemCooldownSafe(H.hearthBtn.itemID)
-        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
-        if onCooldown then
-          local prem = (ps + pd) - GetTime()
-          if prem < 0 then prem = 0 end
+      if H.hearthBtn then
+        local checkID = H.hearthBtn.itemID or 6948 -- Hearthstone item ID
+        local ps, pd, pe = GetItemCooldownSafe(checkID)
+        -- Detect active cooldown: duration > 1.5s and remaining > 0
+        local prem = 0
+        local onCooldown = false
+        if ps and pd and ps > 0 and pd > 1.5 then
+          prem = (ps + pd) - GetTime()
+          if prem > 0 then
+            onCooldown = true
+          end
+        end
+        if onCooldown and prem > 0 then
           if H.hearthBtn.cooldown and H.hearthBtn.cooldown.SetCooldown then 
             H.hearthBtn.cooldown:SetCooldown(ps, pd)
             H.hearthBtn.cooldown:Show() 
@@ -1376,12 +1431,29 @@ function H.BuildUtilities()
         end
       end
       -- Bandage cooldown (spiral + dim + big number)
-      if H.bandageBtn and H.bandageBtn.itemID then
-        local ps, pd, pe = GetItemCooldownSafe(H.bandageBtn.itemID)
-        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
-        if onCooldown then
-          local prem = (ps + pd) - GetTime()
-          if prem < 0 then prem = 0 end
+      -- Bandages have their own 60-second "Recently Bandaged" debuff cooldown
+      if H.bandageBtn then
+        local checkID = H.bandageBtn.itemID
+        -- Fallback: check a common bandage ID if no specific item bound
+        if not checkID then
+          for id, _ in pairs(BANDAGE_RANKS) do
+            if GetItemCount and GetItemCount(id) > 0 then checkID = id; break end
+          end
+        end
+        local ps, pd, pe = 0, 0, 1
+        if checkID then
+          ps, pd, pe = GetItemCooldownSafe(checkID)
+        end
+        -- Detect active cooldown: duration > 1.5s and remaining > 0
+        local prem = 0
+        local onCooldown = false
+        if ps and pd and ps > 0 and pd > 1.5 then
+          prem = (ps + pd) - GetTime()
+          if prem > 0 then
+            onCooldown = true
+          end
+        end
+        if onCooldown and prem > 0 then
           if H.bandageBtn.cooldown and H.bandageBtn.cooldown.SetCooldown then 
             H.bandageBtn.cooldown:SetCooldown(ps, pd)
             H.bandageBtn.cooldown:Show() 
