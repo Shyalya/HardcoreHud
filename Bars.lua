@@ -722,7 +722,6 @@ local shieldUpdateFrame = CreateFrame("Frame")
 local shieldUpdateAcc = 0
 local shieldLastHP = 0
 local shieldLastCheckTime = 0
-local shieldLastDamageHP = 0  -- HP snapshot taken when damage event arrives
 
 -- SIMPLIFIED Shield tracking: Track HP continuously and decay shield when taking damage
 shieldUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
@@ -744,57 +743,58 @@ shieldUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
   if not H.shieldState or not H.shieldState.active then
     shieldLastHP = currentHP
     shieldLastCheckTime = now
-    shieldTracker.damageWindow = {}
+    H._shieldDamageQueue = {}
     H.UpdateShieldBorder()
     return
   end
   
   local hpLost = math.max(0, shieldLastHP - currentHP)
   
-  -- Process combat log damage window
+  -- Process damage queue from combat log
+  H._shieldDamageQueue = H._shieldDamageQueue or {}
   local pendingDamage = 0
-  local newWindow = {}
-  for _, evt in ipairs(shieldTracker.damageWindow or {}) do
+  local newQueue = {}
+  for _, evt in ipairs(H._shieldDamageQueue) do
     local age = now - evt.time
     if age < 0.5 then  -- Keep events for 500ms
       pendingDamage = pendingDamage + evt.amount
-      table.insert(newWindow, evt)
+      table.insert(newQueue, evt)
     end
   end
-  shieldTracker.damageWindow = newWindow
+  H._shieldDamageQueue = newQueue
   
-  -- CORRECT APPROACH for shield absorption calculation:
+  -- Calculate absorbed damage:
   -- When damage comes in (from combat log) and HP drops less than the damage:
   -- absorbed = pendingDamage - hpLost
-  -- Example: 100 damage, HP drops 30 → shield absorbed 70
-  -- Example: 100 damage, HP drops 0 → shield absorbed 100
-  -- Example: 100 damage, HP drops 100 → shield absorbed 0 (shield was already gone)
-  
   local absorbed = 0
   
   if pendingDamage > 0 then
-    -- We have damage events from combat log
     if hpLost < pendingDamage then
-      -- Shield absorbed the difference between damage taken and HP lost
       absorbed = pendingDamage - hpLost
     end
-    -- Clear the processed damage window
-    shieldTracker.damageWindow = {}
-  elseif hpLost > 0 then
-    -- HP dropped but no combat log damage recorded (edge case)
-    -- Estimate conservatively: shield took ~30% of HP lost as damage
-    absorbed = math.floor(hpLost * 0.3)
+    -- Clear processed damage
+    H._shieldDamageQueue = {}
+  elseif hpLost > 0 and H.shieldState.currentAbsorb > 0 then
+    -- HP dropped without combat log damage - estimate shield took some
+    absorbed = math.floor(hpLost * 0.5)
   end
   
-  -- Clamp to remaining shield and apply
+  -- Apply absorbed damage to shield
   if absorbed > 0 and H.shieldState.currentAbsorb > 0 then
     absorbed = math.min(absorbed, H.shieldState.currentAbsorb)
+    local before = H.shieldState.currentAbsorb
+    H.shieldState.currentAbsorb = math.max(0, H.shieldState.currentAbsorb - absorbed)
     
     if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.shield then
-      print(string.format("[HardcoreHUD] Shield: damage=%d hpLost=%d absorbed=%d (remaining: %d)", 
-        pendingDamage, hpLost, absorbed, H.shieldState.currentAbsorb - absorbed))
+      local pct = H.shieldState.maxAbsorb > 0 and math.floor((H.shieldState.currentAbsorb / H.shieldState.maxAbsorb) * 100) or 0
+      print(string.format("[HardcoreHUD] Shield: %d -> %d (%d%%) absorbed %d (dmg=%d hpLost=%d)", 
+        before, H.shieldState.currentAbsorb, pct, absorbed, pendingDamage, hpLost))
     end
-    H.OnShieldAbsorb(absorbed)
+    
+    -- Check if shield depleted
+    if H.shieldState.currentAbsorb <= 0 then
+      H.shieldState.active = false
+    end
   end
   
   shieldLastHP = currentHP
@@ -803,7 +803,7 @@ shieldUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
   -- Update visual every frame
   H.UpdateShieldBorder()
   
-  -- Check if shield buff is still present (every 0.5 sec to reduce overhead)
+  -- Check if shield buff is still present (every 0.5 sec)
   if not shieldUpdateFrame._lastBuffCheck or (now - shieldUpdateFrame._lastBuffCheck) > 0.5 then
     shieldUpdateFrame._lastBuffCheck = now
     local hasShield = GetActivePWSInfo()
@@ -816,76 +816,65 @@ shieldUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
   end
 end)
 
--- Record damage event from combat log
-function H.RecordShieldDamage(amount)
-  if not amount or amount <= 0 then return end
-  if not H.shieldState or not H.shieldState.active then return end
-  table.insert(shieldTracker.damageWindow, {time = GetTime(), amount = amount})
-end
-
--- Combat Log handler for shield damage tracking
+-- SINGLE Combat Log handler for shield damage tracking
 local shieldCombatFrame = CreateFrame("Frame")
 shieldCombatFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 shieldCombatFrame:SetScript("OnEvent", function(self, event, ...)
   if not H.shieldState or not H.shieldState.active then return end
   
-  -- Classic Era 1.15.x combat log format varies by event type
-  -- Args: timestamp, subEvent, hideCaster, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, ...payload
-  -- Note: In some Classic Era builds, srcRaidFlags/dstRaidFlags may not exist
-  local timestamp, subEvent, hideCaster, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags = ...
-  
-  -- Check if dstGUID looks like a GUID or if we need to shift
-  -- In Classic Era 1.15.x without raid flags, args shift by 2
-  local payloadStart = 10
-  if type(dstGUID) ~= "string" or not string.find(dstGUID or "", "^Player%-") and not string.find(dstGUID or "", "^Creature%-") then
-    -- Might be a different format, try alternate parsing
-    dstGUID = select(7, ...)
-    payloadStart = 10
-  end
+  -- Classic Era 1.15.x: args come directly via ...
+  local timestamp, subEvent, hideCaster, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags,
+        arg10, arg11, arg12, arg13, arg14, arg15 = ...
   
   local playerGUID = UnitGUID("player")
   if dstGUID ~= playerGUID then return end
   
+  H._shieldDamageQueue = H._shieldDamageQueue or {}
+  local now = GetTime()
   local damageAmount = nil
   
   -- Extract damage from various event types
   if subEvent == "SWING_DAMAGE" then
-    -- SWING_DAMAGE: amount is first payload arg
-    damageAmount = select(payloadStart, ...)
+    damageAmount = arg10  -- amount is first payload arg
   elseif subEvent == "SPELL_DAMAGE" or subEvent == "SPELL_PERIODIC_DAMAGE" or subEvent == "RANGE_DAMAGE" then
-    -- SPELL_DAMAGE: spellId, spellName, spellSchool, amount
-    damageAmount = select(payloadStart + 3, ...)  -- amount after spell info
+    damageAmount = arg13  -- after spellId, spellName, spellSchool
   elseif subEvent == "ENVIRONMENTAL_DAMAGE" then
-    -- ENVIRONMENTAL_DAMAGE: envType, amount
-    damageAmount = select(payloadStart + 1, ...)
-  elseif subEvent == "SWING_MISSED" or subEvent == "SPELL_MISSED" or subEvent == "RANGE_MISSED" then
-    local missType, absAmount
-    if subEvent == "SWING_MISSED" then
-      missType = select(payloadStart, ...)
-      absAmount = select(payloadStart + 1, ...)
-    else
-      -- SPELL_MISSED: spellId, spellName, spellSchool, missType, isOffHand, amountMissed
-      missType = select(payloadStart + 3, ...)
-      absAmount = select(payloadStart + 5, ...)
-    end
-    
+    damageAmount = arg11  -- after envType
+  elseif subEvent == "SWING_MISSED" then
+    local missType = arg10
     if missType == "ABSORB" then
+      local absAmount = arg11
       local absorb = (type(absAmount) == "number" and absAmount > 0) and absAmount or math.floor((H.shieldState.maxAbsorb or 500) * 0.15)
       absorb = math.max(absorb, 30)
+      absorb = math.min(absorb, H.shieldState.currentAbsorb)
+      H.shieldState.currentAbsorb = math.max(0, H.shieldState.currentAbsorb - absorb)
       if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.shield then
-        print(string.format("[HardcoreHUD] ABSORB miss: ~%d absorbed", absorb))
+        print(string.format("[HardcoreHUD] ABSORB miss: %d absorbed, shield now %d", absorb, H.shieldState.currentAbsorb))
       end
-      H.OnShieldAbsorb(absorb)
+      if H.shieldState.currentAbsorb <= 0 then H.shieldState.active = false end
+      return
+    end
+  elseif subEvent == "SPELL_MISSED" or subEvent == "RANGE_MISSED" then
+    local missType = arg13  -- after spellId, spellName, spellSchool
+    if missType == "ABSORB" then
+      local absAmount = arg14
+      local absorb = (type(absAmount) == "number" and absAmount > 0) and absAmount or math.floor((H.shieldState.maxAbsorb or 500) * 0.15)
+      absorb = math.max(absorb, 30)
+      absorb = math.min(absorb, H.shieldState.currentAbsorb)
+      H.shieldState.currentAbsorb = math.max(0, H.shieldState.currentAbsorb - absorb)
+      if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.shield then
+        print(string.format("[HardcoreHUD] SPELL ABSORB miss: %d absorbed, shield now %d", absorb, H.shieldState.currentAbsorb))
+      end
+      if H.shieldState.currentAbsorb <= 0 then H.shieldState.active = false end
       return
     end
   end
   
   -- Record damage for HP-based calculation
   if damageAmount and type(damageAmount) == "number" and damageAmount > 0 then
-    shieldTracker.damageWindow = shieldTracker.damageWindow or {}
-    table.insert(shieldTracker.damageWindow, {time = GetTime(), amount = damageAmount})
+    table.insert(H._shieldDamageQueue, {time = now, amount = damageAmount})
     if HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.shield then
-      print(string.format("[HardcoreHUD] Damage recorded: %d (%s)", damageAmount, subEvent))
+      print(string.format("[HardcoreHUD] Damage queued: %d (%s)", damageAmount, subEvent))
     end
   end
 end)
