@@ -277,12 +277,16 @@ end
 
 -- Safe GetItemCooldown wrapper for clients that lack the API
 local function GetItemCooldownSafe(itemID)
-  if not itemID then return nil, nil, nil end
+  if not itemID then return 0, 0, 0 end
   if GetItemCooldown then
-    local s,d,e = GetItemCooldown(itemID)
-    return s,d,e
+    local s, d, e = GetItemCooldown(itemID)
+    -- Ensure we return valid numbers (some clients return nil)
+    s = s or 0
+    d = d or 0
+    e = e or 0
+    return s, d, e
   end
-  return nil, nil, nil
+  return 0, 0, 0
 end
 
 local function findHighestPotion()
@@ -1290,16 +1294,20 @@ function H.BuildUtilities()
       -- Potion cooldown (spiral + dim + big number)
       if H.potionBtn and H.potionBtn.itemID then
         local ps, pd, pe = GetItemCooldownSafe(H.potionBtn.itemID)
-        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
+        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
+        if onCooldown then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
-          if H.potionBtn.cooldown then H.potionBtn.cooldown:SetCooldown(ps, pd); H.potionBtn.cooldown:Show() end
+          if H.potionBtn.cooldown and H.potionBtn.cooldown.SetCooldown then 
+            H.potionBtn.cooldown:SetCooldown(ps, pd)
+            H.potionBtn.cooldown:Show() 
+          end
           if H.potionBtn.icon and H.potionBtn.icon.SetDesaturated then H.potionBtn.icon:SetDesaturated(true) end
           if H.potionBtn.dim then H.potionBtn.dim:Show() end
           if H.potionBtn.cdText then H.potionBtn.cdText:SetText(ShortTime(prem)); H.potionBtn.cdText:Show() end
         else
           if H.potionBtn.cooldown then H.potionBtn.cooldown:Hide() end
-          if H.potionBtn.cdText then H.potionBtn.cdText:Hide() end
+          if H.potionBtn.cdText then H.potionBtn.cdText:SetText(""); H.potionBtn.cdText:Hide() end
           if H.potionBtn.icon and H.potionBtn.icon.SetDesaturated then H.potionBtn.icon:SetDesaturated(false) end
           if H.potionBtn.dim then H.potionBtn.dim:Hide() end
         end
@@ -1307,16 +1315,20 @@ function H.BuildUtilities()
       -- Mana potion cooldown (spiral + dim + big number)
       if H.manaBtn and H.manaBtn.itemID then
         local ps, pd, pe = GetItemCooldownSafe(H.manaBtn.itemID)
-        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
+        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
+        if onCooldown then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
-          if H.manaBtn.cooldown then H.manaBtn.cooldown:SetCooldown(ps, pd); H.manaBtn.cooldown:Show() end
+          if H.manaBtn.cooldown and H.manaBtn.cooldown.SetCooldown then 
+            H.manaBtn.cooldown:SetCooldown(ps, pd)
+            H.manaBtn.cooldown:Show() 
+          end
           if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(true) end
           if H.manaBtn.dim then H.manaBtn.dim:Show() end
           if H.manaBtn.cdText then H.manaBtn.cdText:SetText(ShortTime(prem)); H.manaBtn.cdText:Show() end
         else
           if H.manaBtn.cooldown then H.manaBtn.cooldown:Hide() end
-          if H.manaBtn.cdText then H.manaBtn.cdText:Hide() end
+          if H.manaBtn.cdText then H.manaBtn.cdText:SetText(""); H.manaBtn.cdText:Hide() end
           if H.manaBtn.icon and H.manaBtn.icon.SetDesaturated then H.manaBtn.icon:SetDesaturated(false) end
           if H.manaBtn.dim then H.manaBtn.dim:Hide() end
         end
@@ -1324,16 +1336,20 @@ function H.BuildUtilities()
       -- Hearthstone cooldown (spiral + dim + big number)
       if H.hearthBtn and H.hearthBtn.itemID then
         local ps, pd, pe = GetItemCooldownSafe(H.hearthBtn.itemID)
-        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
+        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
+        if onCooldown then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
-          if H.hearthBtn.cooldown then H.hearthBtn.cooldown:SetCooldown(ps, pd); H.hearthBtn.cooldown:Show() end
+          if H.hearthBtn.cooldown and H.hearthBtn.cooldown.SetCooldown then 
+            H.hearthBtn.cooldown:SetCooldown(ps, pd)
+            H.hearthBtn.cooldown:Show() 
+          end
           if H.hearthBtn.icon and H.hearthBtn.icon.SetDesaturated then H.hearthBtn.icon:SetDesaturated(true) end
           if H.hearthBtn.dim then H.hearthBtn.dim:Show() end
           if H.hearthBtn.cdText then H.hearthBtn.cdText:SetText(ShortTime(prem)); H.hearthBtn.cdText:Show() end
         else
           if H.hearthBtn.cooldown then H.hearthBtn.cooldown:Hide() end
-          if H.hearthBtn.cdText then H.hearthBtn.cdText:Hide() end
+          if H.hearthBtn.cdText then H.hearthBtn.cdText:SetText(""); H.hearthBtn.cdText:Hide() end
           if H.hearthBtn.icon and H.hearthBtn.icon.SetDesaturated then H.hearthBtn.icon:SetDesaturated(false) end
           if H.hearthBtn.dim then H.hearthBtn.dim:Hide() end
         end
@@ -1341,15 +1357,20 @@ function H.BuildUtilities()
       -- Racial cooldown (utility row)
       if H.racialBtn and H.racialBtn.spellID then
         local s, d, e = GetSpellCooldown(H.racialBtn.spellID)
-        if e == 1 and d and d > 0 and s and s > 0 then
+        s = s or 0; d = d or 0; e = e or 0
+        local onCooldown = (e == 1 and d > 1.5 and s > 0)
+        if onCooldown then
           local rem = (s + d) - GetTime(); if rem < 0 then rem = 0 end
-          if H.racialBtn.cooldown then H.racialBtn.cooldown:SetCooldown(s, d); H.racialBtn.cooldown:Show() end
+          if H.racialBtn.cooldown and H.racialBtn.cooldown.SetCooldown then 
+            H.racialBtn.cooldown:SetCooldown(s, d)
+            H.racialBtn.cooldown:Show() 
+          end
           if H.racialBtn.icon and H.racialBtn.icon.SetDesaturated then H.racialBtn.icon:SetDesaturated(true) end
           if H.racialBtn.dim then H.racialBtn.dim:Show() end
           if H.racialBtn.cdText then H.racialBtn.cdText:SetText(ShortTime(rem)); H.racialBtn.cdText:Show() end
         else
           if H.racialBtn.cooldown then H.racialBtn.cooldown:Hide() end
-          if H.racialBtn.cdText then H.racialBtn.cdText:Hide() end
+          if H.racialBtn.cdText then H.racialBtn.cdText:SetText(""); H.racialBtn.cdText:Hide() end
           if H.racialBtn.icon and H.racialBtn.icon.SetDesaturated then H.racialBtn.icon:SetDesaturated(false) end
           if H.racialBtn.dim then H.racialBtn.dim:Hide() end
         end
@@ -1357,16 +1378,20 @@ function H.BuildUtilities()
       -- Bandage cooldown (spiral + dim + big number)
       if H.bandageBtn and H.bandageBtn.itemID then
         local ps, pd, pe = GetItemCooldownSafe(H.bandageBtn.itemID)
-        if ps and pd and pe and pe == 1 and pd > 0 and ps > 0 then
+        local onCooldown = (pe == 1 and pd > 1.5 and ps > 0)
+        if onCooldown then
           local prem = (ps + pd) - GetTime()
           if prem < 0 then prem = 0 end
-          if H.bandageBtn.cooldown then H.bandageBtn.cooldown:SetCooldown(ps, pd); H.bandageBtn.cooldown:Show() end
+          if H.bandageBtn.cooldown and H.bandageBtn.cooldown.SetCooldown then 
+            H.bandageBtn.cooldown:SetCooldown(ps, pd)
+            H.bandageBtn.cooldown:Show() 
+          end
           if H.bandageBtn.icon and H.bandageBtn.icon.SetDesaturated then H.bandageBtn.icon:SetDesaturated(true) end
           if H.bandageBtn.dim then H.bandageBtn.dim:Show() end
           if H.bandageBtn.cdText then H.bandageBtn.cdText:SetText(ShortTime(prem)); H.bandageBtn.cdText:Show() end
         else
           if H.bandageBtn.cooldown then H.bandageBtn.cooldown:Hide() end
-          if H.bandageBtn.cdText then H.bandageBtn.cdText:Hide() end
+          if H.bandageBtn.cdText then H.bandageBtn.cdText:SetText(""); H.bandageBtn.cdText:Hide() end
           if H.bandageBtn.icon and H.bandageBtn.icon.SetDesaturated then H.bandageBtn.icon:SetDesaturated(false) end
           if H.bandageBtn.dim then H.bandageBtn.dim:Hide() end
         end
@@ -2819,9 +2844,69 @@ function H.InitReminders()
   end
 
   -- Debug command to check shield tracking state
+  -- Usage: /hhshield - show debug info
+  --        /hhshield test - force show shield border for visual testing
+  --        /hhshield off - hide test shield border
   SLASH_HHSHIELD1 = "/hhshield"
-  SlashCmdList["HHSHIELD"] = function()
+  SlashCmdList["HHSHIELD"] = function(args)
+    args = args and string.lower(args) or ""
+    
+    -- Test mode: force show the shield border
+    if args == "test" then
+      print("[HardcoreHUD] Shield Border TEST MODE")
+      
+      -- Ensure shieldBorder is built
+      if not H.shieldBorder then
+        if H.BuildShieldBorder then
+          H.BuildShieldBorder()
+        end
+      end
+      
+      if not H.shieldBorder then
+        print("  ERROR: shieldBorder frame could not be created")
+        print("  bars.hp exists:", H.bars and H.bars.hp and "YES" or "NO")
+        return
+      end
+      
+      -- Force activate shield state
+      H.shieldState = H.shieldState or {}
+      H.shieldState.active = true
+      H.shieldState.maxAbsorb = 1000
+      H.shieldState.currentAbsorb = 750  -- 75% shield
+      H.shieldState.spellId = 10901
+      
+      -- Force update
+      if H.UpdateShieldBorder then
+        H.UpdateShieldBorder()
+      end
+      
+      print("  Shield border should now be visible (75% shield)")
+      print("  Frame shown:", H.shieldBorder:IsShown() and "YES" or "NO")
+      if H.shieldBorder.left then print("  left shown:", H.shieldBorder.left:IsShown() and "YES" or "NO") end
+      if H.shieldBorder.right then print("  right shown:", H.shieldBorder.right:IsShown() and "YES" or "NO") end
+      if H.shieldBorder.bottom then print("  bottom shown:", H.shieldBorder.bottom:IsShown() and "YES" or "NO") end
+      if H.shieldBorder.glow then print("  glow shown:", H.shieldBorder.glow:IsShown() and "YES" or "NO") end
+      if H.shieldBorder.text then print("  text shown:", H.shieldBorder.text:IsShown() and "YES" or "NO") end
+      return
+    end
+    
+    -- Off mode: hide test shield border
+    if args == "off" then
+      print("[HardcoreHUD] Shield Border TEST MODE OFF")
+      H.shieldState = H.shieldState or {}
+      H.shieldState.active = false
+      H.shieldState.currentAbsorb = 0
+      H.shieldState.maxAbsorb = 0
+      if H.UpdateShieldBorder then
+        H.UpdateShieldBorder()
+      end
+      return
+    end
+    
+    -- Default: show debug info
     print("[HardcoreHUD] Shield Tracking Debug:")
+    print("  Use '/hhshield test' to force show the border")
+    print("  Use '/hhshield off' to hide the test border")
     
     -- Check if shieldState exists
     if not H.shieldState then
@@ -2838,7 +2923,15 @@ function H.InitReminders()
       print("  shieldBorder frame: NIL")
     else
       print(string.format("  shieldBorder frame: %s", H.shieldBorder:IsShown() and "SHOWN" or "HIDDEN"))
+      if H.shieldBorder.left then print(string.format("    left: %s", H.shieldBorder.left:IsShown() and "SHOWN" or "HIDDEN")) end
+      if H.shieldBorder.right then print(string.format("    right: %s", H.shieldBorder.right:IsShown() and "SHOWN" or "HIDDEN")) end
+      if H.shieldBorder.bottom then print(string.format("    bottom: %s", H.shieldBorder.bottom:IsShown() and "SHOWN" or "HIDDEN")) end
+      if H.shieldBorder.glow then print(string.format("    glow: %s", H.shieldBorder.glow:IsShown() and "SHOWN" or "HIDDEN")) end
+      if H.shieldBorder.text then print(string.format("    text: %s", H.shieldBorder.text:IsShown() and "SHOWN" or "HIDDEN")) end
     end
+    
+    -- Check bars.hp
+    print(string.format("  bars.hp: %s", H.bars and H.bars.hp and "EXISTS" or "NIL"))
     
     -- List all current buffs to help find the PW:S buff name
     print("  Current buffs:")
@@ -3153,29 +3246,23 @@ do
         return
       end
       
-      local p = prevProps[frame]
-      -- Always restore sane visibility defaults; otherwise a prior "strong hide"
-      -- can leave the frame technically shown but invisible (alpha=0 / tiny scale).
-      local a = (p and p.alpha) or 1
-      local sc = (p and p.scale) or 1
-      -- Guard against poisoned cached values (e.g. 0 / ~0) which make frames invisible.
-      if type(a) == "number" and a < 0.05 then a = 1 end
-      if type(sc) == "number" and sc < 0.05 then sc = 1 end
-      if frame.SetAlpha then frame:SetAlpha(a) end
-      if frame.SetScale then frame:SetScale(sc) end
-      if frame.SetFrameStrata and (p and p.strata) then frame:SetFrameStrata(p.strata) end
+      -- Always restore to full visibility with hardcoded good values
+      -- Never rely on cached values as they can get corrupted
+      if frame.SetAlpha then frame:SetAlpha(1) end
+      if frame.SetScale then frame:SetScale(1) end
+      if frame.SetFrameStrata then frame:SetFrameStrata("MEDIUM") end
+      if frame.SetFrameLevel then frame:SetFrameLevel(100) end
       if frame.EnableMouse then frame:EnableMouse(true) end
       frame:Show()
+      -- Clear any cached props
+      prevProps[frame] = nil
     else
-      -- store previous visual props and then hide strongly
-      if not prevProps[frame] then
-        prevProps[frame] = {
-          alpha = (frame.GetAlpha and frame:GetAlpha()) or 1,
-          strata = (frame.GetFrameStrata and frame:GetFrameStrata()) or nil,
-          scale = (frame.GetScale and frame:GetScale()) or 1,
-        }
+      -- Only hide HUD bars, not utility buttons - they should always remain visible
+      if isSecureButton(frame) then
+        -- Don't hide secure utility buttons at all - just skip them
+        return
       end
-      -- Hide without permanently poisoning alpha/scale.
+      -- For non-secure frames (bars etc), just hide
       if frame.EnableMouse then frame:EnableMouse(false) end
       frame:Hide()
     end
@@ -3211,19 +3298,8 @@ do
     "AtlasLootPanels",
     "AtlasLootItemsFrame",
     "AtlasLoot_GUIMenu",
-    "QuestLogFrame",
-    -- "SpellBookFrame",  -- Allow HUD to show with spellbook open
-    "CharacterFrame",
-    "TradeSkillFrame",
-    "MerchantFrame",
-    "AuctionFrame",
-    "FriendsFrame",
-    "PVPFrame",
-    "TalentFrame",
-    "ClassTrainerFrame",
-    "MailFrame",
-    "GuildFrame",
-    "PetStableFrame",
+    -- NOTE: Removed many frames that briefly open during normal gameplay
+    -- Only fullscreen/major UI windows should hide the HUD
   }
 
   local function AnyFrameShown()
