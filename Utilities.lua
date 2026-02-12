@@ -279,27 +279,95 @@ end
 -- In Classic Era, potions share a 2-minute cooldown category
 -- GetItemCooldown may return enabled=0 for category cooldowns, but we can detect
 -- active cooldowns by checking if start > 0 and duration > 1.5 (GCD threshold)
-local function GetItemCooldownSafe(itemID)
+local function GetItemCooldownSafe(itemID, bag, slot)
   if not itemID then return 0, 0, 1 end
-  if GetItemCooldown then
-    local s, d, e = GetItemCooldown(itemID)
-    -- Ensure we return valid numbers (some clients return nil)
-    s = s or 0
-    d = d or 0
-    e = e or 0
-    -- In Classic Era, 'enabled' can be 0 for items with shared cooldowns (potions)
-    -- Detect active cooldown by checking start/duration values directly
-    -- Duration > 1.5 distinguishes real cooldowns from GCD
-    if s > 0 and d > 1.5 then
-      -- There's a real cooldown running
-      e = 1
-    elseif e == 0 or e == nil then
-      -- No cooldown or GCD only
-      e = 1
+  
+  -- Method 1: C_Container API (newer Classic Era builds)
+  if bag and slot and C_Container and C_Container.GetContainerItemCooldown then
+    local ok, cs, cd, ce = pcall(C_Container.GetContainerItemCooldown, bag, slot)
+    if ok and cs then
+      cs = cs or 0
+      cd = cd or 0
+      ce = ce or 1
+      if cs > 0 and cd > 1.5 then
+        return cs, cd, 1
+      end
     end
-    return s, d, e
   end
+  
+  -- Method 2: Legacy GetContainerItemCooldown 
+  if bag and slot and GetContainerItemCooldown then
+    local ok, cs, cd, ce = pcall(GetContainerItemCooldown, bag, slot)
+    if ok and cs then
+      cs = cs or 0
+      cd = cd or 0
+      ce = ce or 1
+      if cs > 0 and cd > 1.5 then
+        return cs, cd, 1
+      end
+    end
+  end
+  
+  -- Method 3: GetItemCooldown by item ID (most reliable for potions in Classic Era)
+  if GetItemCooldown then
+    local ok, is, id, ie = pcall(GetItemCooldown, itemID)
+    if ok then
+      is = is or 0
+      id = id or 0
+      ie = ie or 0
+      -- In Classic Era, 'enabled' can be 0 for items with shared cooldowns (potions)
+      -- Detect active cooldown by checking start/duration values directly
+      -- Duration > 1.5 distinguishes real cooldowns from GCD
+      if is > 0 and id > 1.5 then
+        return is, id, 1
+      end
+    end
+  end
+  
+  -- Method 4: Direct call without pcall as final fallback
+  if GetItemCooldown then
+    local is, id, ie = GetItemCooldown(itemID)
+    is = is or 0
+    id = id or 0
+    if is > 0 and id > 1.5 then
+      return is, id, 1
+    end
+  end
+  
   return 0, 0, 1
+end
+
+-- Find bag/slot for a given item ID (for cooldown checks)
+local function FindItemBagSlot(itemID)
+  if not itemID then return nil, nil end
+  
+  -- Try C_Container API first (newer Classic Era builds)
+  if C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemID then
+    for bag = 0, 4 do
+      local slots = C_Container.GetContainerNumSlots(bag) or 0
+      for slot = 1, slots do
+        local id = C_Container.GetContainerItemID(bag, slot)
+        if id == itemID then
+          return bag, slot
+        end
+      end
+    end
+  end
+  
+  -- Fallback to legacy API
+  if GetContainerNumSlots and GetContainerItemID then
+    for bag = 0, 4 do
+      local slots = GetContainerNumSlots(bag) or 0
+      for slot = 1, slots do
+        local id = GetContainerItemID(bag, slot)
+        if id == itemID then
+          return bag, slot
+        end
+      end
+    end
+  end
+  
+  return nil, nil
 end
 
 local function findHighestPotion()
@@ -1309,16 +1377,32 @@ function H.BuildUtilities()
       -- We check any known healing potion ID to get the shared cooldown state
       if H.potionBtn then
         local checkID = H.potionBtn.itemID
+        local checkBag, checkSlot = nil, nil
         -- Fallback: check a common potion ID if no specific item bound
         if not checkID then
           for id, _ in pairs(HEAL_POTION_RANKS) do
             if GetItemCount and GetItemCount(id) > 0 then checkID = id; break end
           end
         end
+        -- Find bag/slot for container-based cooldown check
+        if checkID then
+          checkBag, checkSlot = FindItemBagSlot(checkID)
+        end
         local ps, pd, pe = 0, 0, 1
         if checkID then
-          ps, pd, pe = GetItemCooldownSafe(checkID)
+          ps, pd, pe = GetItemCooldownSafe(checkID, checkBag, checkSlot)
         end
+        
+        -- DEBUG: Print cooldown values (once per 5 seconds)
+        if not H._lastPotionCDDebug then H._lastPotionCDDebug = 0 end
+        if pulseAccum > H._lastPotionCDDebug + 5 then
+          H._lastPotionCDDebug = pulseAccum
+          if checkID and HardcoreHUDDB and type(HardcoreHUDDB.debug) == "table" and HardcoreHUDDB.debug.shield then
+            print(string.format("[HardcoreHUD] Potion CD check: id=%s bag=%s slot=%s -> start=%.1f dur=%.1f enabled=%s", 
+              tostring(checkID), tostring(checkBag), tostring(checkSlot), ps or 0, pd or 0, tostring(pe)))
+          end
+        end
+        
         -- Detect active cooldown: duration > 1.5s (not just GCD) and remaining > 0
         local prem = 0
         local onCooldown = false
@@ -1347,15 +1431,20 @@ function H.BuildUtilities()
       -- Mana potions share the same 2-minute category cooldown as healing potions
       if H.manaBtn then
         local checkID = H.manaBtn.itemID
+        local checkBag, checkSlot = nil, nil
         -- Fallback: check a common mana potion ID if no specific item bound
         if not checkID then
           for id, _ in pairs(MANA_POTION_RANKS) do
             if GetItemCount and GetItemCount(id) > 0 then checkID = id; break end
           end
         end
+        -- Find bag/slot for container-based cooldown check
+        if checkID then
+          checkBag, checkSlot = FindItemBagSlot(checkID)
+        end
         local ps, pd, pe = 0, 0, 1
         if checkID then
-          ps, pd, pe = GetItemCooldownSafe(checkID)
+          ps, pd, pe = GetItemCooldownSafe(checkID, checkBag, checkSlot)
         end
         -- Detect active cooldown: duration > 1.5s and remaining > 0
         local prem = 0
@@ -1384,7 +1473,8 @@ function H.BuildUtilities()
       -- Hearthstone cooldown (spiral + dim + big number)
       if H.hearthBtn then
         local checkID = H.hearthBtn.itemID or 6948 -- Hearthstone item ID
-        local ps, pd, pe = GetItemCooldownSafe(checkID)
+        local checkBag, checkSlot = FindItemBagSlot(checkID)
+        local ps, pd, pe = GetItemCooldownSafe(checkID, checkBag, checkSlot)
         -- Detect active cooldown: duration > 1.5s and remaining > 0
         local prem = 0
         local onCooldown = false
@@ -1434,15 +1524,20 @@ function H.BuildUtilities()
       -- Bandages have their own 60-second "Recently Bandaged" debuff cooldown
       if H.bandageBtn then
         local checkID = H.bandageBtn.itemID
+        local checkBag, checkSlot = nil, nil
         -- Fallback: check a common bandage ID if no specific item bound
         if not checkID then
           for id, _ in pairs(BANDAGE_RANKS) do
             if GetItemCount and GetItemCount(id) > 0 then checkID = id; break end
           end
         end
+        -- Find bag/slot for container-based cooldown check
+        if checkID then
+          checkBag, checkSlot = FindItemBagSlot(checkID)
+        end
         local ps, pd, pe = 0, 0, 1
         if checkID then
-          ps, pd, pe = GetItemCooldownSafe(checkID)
+          ps, pd, pe = GetItemCooldownSafe(checkID, checkBag, checkSlot)
         end
         -- Detect active cooldown: duration > 1.5s and remaining > 0
         local prem = 0
@@ -3018,6 +3113,98 @@ function H.InitReminders()
       print("  Running CheckShieldState()...")
       H.CheckShieldState()
       print(string.format("  After check - active: %s", tostring(H.shieldState and H.shieldState.active)))
+    end
+  end
+
+  -- Debug command to check potion/item cooldowns
+  -- Usage: /hhcd - shows cooldown status of all utility buttons
+  SLASH_HHCD1 = "/hhcd"
+  SlashCmdList["HHCD"] = function()
+    print("[HardcoreHUD] Cooldown Debug:")
+    
+    -- Check API availability
+    print("  API Check:")
+    print(string.format("    GetItemCooldown: %s", GetItemCooldown and "YES" or "NO"))
+    print(string.format("    GetContainerItemCooldown: %s", GetContainerItemCooldown and "YES" or "NO"))
+    print(string.format("    C_Container: %s", C_Container and "YES" or "NO"))
+    if C_Container then
+      print(string.format("    C_Container.GetContainerItemCooldown: %s", C_Container.GetContainerItemCooldown and "YES" or "NO"))
+    end
+    
+    -- Test with a known potion ID
+    local testIDs = {118, 858, 929, 1710, 3928, 6149, 13446}  -- Various healing potions
+    local foundPotion = nil
+    for _, id in ipairs(testIDs) do
+      local count = GetItemCount and GetItemCount(id) or 0
+      if count > 0 then
+        foundPotion = id
+        print(string.format("  Found potion: ID=%d count=%d", id, count))
+        break
+      end
+    end
+    
+    if foundPotion then
+      -- Find bag/slot
+      local bag, slot = nil, nil
+      if C_Container and C_Container.GetContainerNumSlots then
+        for b = 0, 4 do
+          local slots = C_Container.GetContainerNumSlots(b) or 0
+          for s = 1, slots do
+            local id = C_Container.GetContainerItemID(b, s)
+            if id == foundPotion then bag, slot = b, s; break end
+          end
+          if bag then break end
+        end
+      elseif GetContainerNumSlots then
+        for b = 0, 4 do
+          local slots = GetContainerNumSlots(b) or 0
+          for s = 1, slots do
+            local id = GetContainerItemID(b, s)
+            if id == foundPotion then bag, slot = b, s; break end
+          end
+          if bag then break end
+        end
+      end
+      print(string.format("  Bag/Slot: %s/%s", tostring(bag), tostring(slot)))
+      
+      -- Test GetItemCooldown
+      if GetItemCooldown then
+        local s, d, e = GetItemCooldown(foundPotion)
+        print(string.format("  GetItemCooldown(%d): start=%.2f dur=%.2f enabled=%s", foundPotion, s or 0, d or 0, tostring(e)))
+        if s and d and s > 0 and d > 0 then
+          local rem = (s + d) - GetTime()
+          print(string.format("    Remaining: %.1f seconds", rem))
+        end
+      end
+      
+      -- Test GetContainerItemCooldown
+      if bag and slot and GetContainerItemCooldown then
+        local s, d, e = GetContainerItemCooldown(bag, slot)
+        print(string.format("  GetContainerItemCooldown(%d,%d): start=%.2f dur=%.2f enabled=%s", bag, slot, s or 0, d or 0, tostring(e)))
+      end
+      
+      -- Test C_Container
+      if bag and slot and C_Container and C_Container.GetContainerItemCooldown then
+        local s, d, e = C_Container.GetContainerItemCooldown(bag, slot)
+        print(string.format("  C_Container.GetContainerItemCooldown(%d,%d): start=%.2f dur=%.2f enabled=%s", bag, slot, s or 0, d or 0, tostring(e)))
+      end
+    else
+      print("  No potions found in bags!")
+    end
+    
+    -- Check potion button state
+    if H.potionBtn then
+      print(string.format("  H.potionBtn.itemID: %s", tostring(H.potionBtn.itemID)))
+      print(string.format("  H.potionBtn.cooldown: %s", H.potionBtn.cooldown and "EXISTS" or "NIL"))
+      if H.potionBtn.cooldown then
+        print(string.format("    cooldown:IsShown(): %s", H.potionBtn.cooldown:IsShown() and "YES" or "NO"))
+      end
+      print(string.format("  H.potionBtn.cdText: %s", H.potionBtn.cdText and "EXISTS" or "NIL"))
+      if H.potionBtn.cdText then
+        print(string.format("    cdText text: '%s'", H.potionBtn.cdText:GetText() or ""))
+      end
+    else
+      print("  H.potionBtn: NIL")
     end
   end
 

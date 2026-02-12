@@ -70,30 +70,11 @@ function H.BuildWarnings()
   H.eliteTextFrame = eliteTextFrame
   H.EliteAttentionText = eliteText
 
-  -- Damage spike / Time-to-Death bar
-  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = true, window = 5, maxDisplay = 30, warnThreshold = 3 }
-  -- Integrate TTD into the main HP bar to reduce clutter
-  local parentBar = (H.bars and H.bars.hp) or UIParent
-  local spike = CreateFrame("StatusBar", nil, parentBar)
-  spike:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar")
-  -- Stretch across the HP bar width as a thin overlay at the top
-  spike:ClearAllPoints()
-  spike:SetPoint("TOPLEFT", parentBar, "TOPLEFT", 0, 0)
-  spike:SetPoint("TOPRIGHT", parentBar, "TOPRIGHT", 0, 0)
-  spike:SetHeight(6)
-  spike:SetMinMaxValues(0, HardcoreHUDDB.spike.maxDisplay or 10)
-  spike:SetValue(0)
-  -- Draw above the HP bar but below fullscreen dialogs
-  spike:SetFrameStrata("HIGH")
-  spike:Hide()
-  local sbg = spike:CreateTexture(nil, "BACKGROUND")
-  sbg:SetAllPoints(spike)
-  sbg:SetColorTexture(0,0,0,0.55)
-  local stxt = spike:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  stxt:SetPoint("BOTTOMRIGHT", spike, "TOPRIGHT", 0, 0)
-  spike.text = stxt
-  spike.pulseAcc = 0
-  H.spikeFrame = spike
+  -- Damage spike / Time-to-Death bar - DISABLED (removed as it was confusing)
+  -- TTD functionality completely removed per user request
+  HardcoreHUDDB.spike = HardcoreHUDDB.spike or { enabled = false, window = 5, maxDisplay = 30, warnThreshold = 3 }
+  HardcoreHUDDB.spike.enabled = false  -- Force disabled
+  H.spikeFrame = nil  -- No TTD frame
 
   -- Performance (Latency/FPS) warning
   HardcoreHUDDB.warnings = HardcoreHUDDB.warnings or {}
@@ -264,16 +245,10 @@ function H.BuildWarnings()
   rangeFrame.label = rangeLabel
 end
 
--- Centralized spike/TTD visibility helper to honor alwaysShow
+-- TTD visibility helper - DISABLED (TTD feature removed)
 function H.UpdateSpikeVisibility()
-  local cfg = HardcoreHUDDB.spike
-  if not (cfg and cfg.enabled) then if H.spikeFrame then H.spikeFrame:Hide() end return end
-  -- Only show in combat per request
-  if H._inCombat then
-    if H.spikeFrame then H.spikeFrame:Show() end
-  else
-    if H.spikeFrame then H.spikeFrame:Hide() end
-  end
+  -- TTD completely disabled - do nothing
+  if H.spikeFrame then H.spikeFrame:Hide() end
 end
 
 function H.ShowCriticalHPWarning()
@@ -382,91 +357,14 @@ local function PlayEliteSound()
   PlaySoundFile("Sound\\Interface\\RaidWarning.wav")
 end
 
--- Spike updater frame (separate lightweight OnUpdate)
--- Continuous Time-to-Death estimator using HP loss rate
-if not H._ttdDriver then
-  local drv = CreateFrame("Frame")
-  H._ttdDriver = drv
-  local accum = 0
-  local sampleAcc = 0
-  H._hpSamples = H._hpSamples or {}
-  drv:SetScript("OnUpdate", function(_, dt)
-    accum = accum + dt
-    sampleAcc = sampleAcc + dt
-    local cfg = HardcoreHUDDB.spike
-    if not (cfg and cfg.enabled) then if H.spikeFrame then H.spikeFrame:Hide() end return end
-    -- Only operate while in combat; hide bar and skip when not
-    if not H._inCombat then
-      if H.spikeFrame then H.spikeFrame:Hide() end
-      return
-    end
-    -- Sample HP at ~10 Hz to build a moving window
-    if sampleAcc >= 0.1 then
-      sampleAcc = 0
-      local now = GetTime()
-      local hp = UnitHealth("player") or 0
-      table.insert(H._hpSamples, {t=now, hp=hp})
-      -- trim to window
-      local win = cfg.window or 5
-      local cutoff = now - win
-      local newIdx = 1
-      for i=1,#H._hpSamples do
-        if H._hpSamples[i].t >= cutoff then H._hpSamples[newIdx] = H._hpSamples[i]; newIdx = newIdx + 1 end
-      end
-      for i=newIdx,#H._hpSamples do H._hpSamples[i] = nil end
-    end
-
-    if accum < 0.2 then return end
-    accum = 0
-    if not H.spikeFrame then return end
-    -- Compute average HP loss per second over window (ignore gains)
-    local samples = H._hpSamples
-    if not samples or #samples < 2 then H.spikeFrame:Show(); H.spikeFrame:SetValue(0); H.spikeFrame.text:SetText("TTD: --") return end
-    local loss = 0
-    for i=2,#samples do
-      local delta = samples[i-1].hp - samples[i].hp
-      if delta > 0 then loss = loss + delta end
-    end
-    local win = cfg.window or 5
-    local dps = loss / win
-    local curHP = UnitHealth("player") or 0
-    local ttd
-    if dps > 1e-3 then
-      ttd = curHP / dps
-    else
-      ttd = (cfg.maxDisplay or 10)
-    end
-    local maxDisp = cfg.maxDisplay or 10
-    local ttdUncapped = ttd
-    local displayVal = ttdUncapped
-    if displayVal > maxDisp then displayVal = maxDisp end
-    local f = H.spikeFrame
-    f:SetMinMaxValues(0, maxDisp)
-    f:SetValue(displayVal)
-    -- Color: green >8, yellow >5, orange >3, red <=3
-    local r,g,b
-    if ttdUncapped > 8 then r,g,b = 0,1,0
-    elseif ttdUncapped > 5 then r,g,b = 1,1,0
-    elseif ttdUncapped > (cfg.warnThreshold or 3) then r,g,b = 1,0.5,0
-    else r,g,b = 1,0.15,0 end
-    f:SetStatusBarColor(r,g,b)
-    local text = string.format("TTD: %.1fs", ttdUncapped)
-    if ttdUncapped > maxDisp then text = text .. "+" end
-    f.text:SetText(text)
-    f:Show()
-    -- Pulse when critical (<= warnThreshold)
-    if ttdUncapped <= (cfg.warnThreshold or 3) then
-      f.pulseAcc = f.pulseAcc + 0.2
-      local alpha = 0.55 + 0.45 * math.abs(math.sin(f.pulseAcc*6))
-      f:SetAlpha(alpha)
-    else
-      f.pulseAcc = 0
-      f:SetAlpha(1)
-    end
-  end)
+-- TTD (Time-to-Death) feature DISABLED - removed per user request
+-- The OnUpdate driver is no longer needed
+if H._ttdDriver then
+  H._ttdDriver:SetScript("OnUpdate", nil)
+  H._ttdDriver = nil
 end
 
--- Track player combat state to control TTD visibility and sampling
+-- Track player combat state (simplified - TTD removed)
 if not H._combatWatcher then
   local cw = CreateFrame("Frame")
   H._combatWatcher = cw
@@ -478,19 +376,9 @@ if not H._combatWatcher then
       H._inCombat = UnitAffectingCombat and UnitAffectingCombat("player") or false
     elseif event == "PLAYER_REGEN_DISABLED" then
       H._inCombat = true
-      -- Fresh window at combat start so motion begins promptly
-      H._hpSamples = {}
     elseif event == "PLAYER_REGEN_ENABLED" then
       H._inCombat = false
-      -- Clear samples and hide bar when leaving combat
-      H._hpSamples = {}
-      if H.spikeFrame then
-        H.spikeFrame:SetValue(0)
-        H.spikeFrame.text:SetText("TTD: --")
-        H.spikeFrame:Hide()
-      end
     end
-    if H.UpdateSpikeVisibility then H.UpdateSpikeVisibility() end
   end)
 end
 
@@ -1183,6 +1071,56 @@ function H.InitGTFO()
     lastAlert = 0
   }
   
+  -- Drowning alert: Use dedicated event handler for immediate response
+  if not H._breathAlertFrame then
+    local bf = CreateFrame("Frame")
+    H._breathAlertFrame = bf
+    bf._lastBreathAlert = 0
+    bf._breathAlertCooldown = 3  -- Don't spam alerts faster than every 3 seconds
+    bf._breathActive = false
+    
+    bf:RegisterEvent("MIRROR_TIMER_START")
+    bf:RegisterEvent("MIRROR_TIMER_STOP")
+    bf:SetScript("OnEvent", function(self, event, timerName, value, maxValue, scale, paused, label)
+      if timerName == "BREATH" then
+        if event == "MIRROR_TIMER_START" then
+          self._breathActive = true
+        elseif event == "MIRROR_TIMER_STOP" then
+          self._breathActive = false
+        end
+      end
+    end)
+    
+    -- Poll breath timer for alerts when below threshold
+    bf._pollAcc = 0
+    bf:SetScript("OnUpdate", function(self, dt)
+      self._pollAcc = self._pollAcc + dt
+      if self._pollAcc < 0.5 then return end  -- Check every 0.5 seconds
+      self._pollAcc = 0
+      
+      if not (HardcoreHUDDB and HardcoreHUDDB.gtfo and HardcoreHUDDB.gtfo.enabled and HardcoreHUDDB.gtfo.fallAlert) then return end
+      
+      -- Check for active breath timer
+      for idx = 1, (MIRRORTIMER_NUMTIMERS or 3) do
+        local name, text, value, maxValue, scale, paused = GetMirrorTimerInfo(idx)
+        if name == "BREATH" and value and maxValue and maxValue > 0 then
+          local breathThreshold = (HardcoreHUDDB.gtfo and HardcoreHUDDB.gtfo.breathThreshold) or 50
+          local breathPercent = (value / maxValue * 100)
+          
+          local now = GetTime()
+          if breathPercent <= breathThreshold and (now - self._lastBreathAlert) > self._breathAlertCooldown then
+            H.TriggerGTFOAlert("DROWNING!", "fall")
+            self._lastBreathAlert = now
+          end
+          return  -- Found breath timer, done checking
+        end
+      end
+    end)
+    
+    -- Make sure the frame is shown so OnUpdate fires
+    bf:Show()
+  end
+  
   -- Dangerous debuff types that indicate AoE/Environment damage
   -- NOTE: Only include debuffs from GROUND EFFECTS that you can move out of!
   -- Do NOT include normal mob debuffs (poison, curse, etc.) - you can't "get out" of those
@@ -1246,26 +1184,17 @@ function H.CheckDangerousDebuffs()
     i = i + 1
   end
   
-  -- Check for breath/fatigue warnings (drowning, fatigue zone)
+  -- Check for fatigue warnings (fatigue zone) - BREATH is handled by dedicated handler
   if HardcoreHUDDB.gtfo.fallAlert then
     for idx = 1, (MIRRORTIMER_NUMTIMERS or 3) do
-      local timerName, timerValue, timerMax = GetMirrorTimerInfo(idx)
+      local timerName, text, timerValue, timerMax = GetMirrorTimerInfo(idx)
       if timerName and timerName ~= "" and timerName ~= "UNKNOWN" and timerValue and timerValue > 0 then
-        if timerName == "BREATH" then
-          -- Only trigger drowning alert when breath is below threshold (default: 50%)
-          local breathThreshold = (HardcoreHUDDB.gtfo and HardcoreHUDDB.gtfo.breathThreshold) or 50
-          local breathPercent = (timerMax and timerMax > 0) and (timerValue / timerMax * 100) or 100
-          if breathPercent <= breathThreshold then
-            H.TriggerGTFOAlert("DROWNING!", "fall")
-            H._lastGTFOAlert = now
-          end
-          break
-        elseif timerName == "EXHAUSTION" then
+        if timerName == "EXHAUSTION" then
           H.TriggerGTFOAlert("FATIGUE!", "fall")
           H._lastGTFOAlert = now
           break
         end
-        -- Ignore FEIGNDEATH timer
+        -- BREATH handled by H._breathAlertFrame, FEIGNDEATH ignored
       end
     end
   end
