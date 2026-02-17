@@ -10,5 +10,6 @@ Core.lua
 Bars.lua
 Combat.lua
 Utilities.lua
+Reputation.lua
 Options.lua
 Zones.lua

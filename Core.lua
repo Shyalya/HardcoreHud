@@ -778,6 +778,8 @@ ev:SetScript("OnEvent", function(_, event, ...)
     if H.targetMarkBar and HardcoreHUDDB.targetMarks and HardcoreHUDDB.targetMarks.enabled then H.targetMarkBar:Show() end
     if H.InitLevelingTracker then H.InitLevelingTracker() end
     if H.levelingTracker and HardcoreHUDDB.leveling and HardcoreHUDDB.leveling.enabled then H.levelingTracker:Show() end
+    if H.InitReputationTracker then H.InitReputationTracker() end
+    if H.reputationTracker and HardcoreHUDDB.reputation and HardcoreHUDDB.reputation.enabled then H.reputationTracker:Show(); H.UpdateReputationTracker() end
     if H.InitThanksBuff then H.InitThanksBuff() end
     if H.InitGTFO then H.InitGTFO() end
     if H.BuildGTFOFrame then H.BuildGTFOFrame() end

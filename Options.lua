@@ -50,6 +50,7 @@ function H.BuildOptions()
   local btnUtilities = makeTabButton("HardcoreHUDTabUtilities", "Utilities", 128)
   local btnTargetMarks = makeTabButton("HardcoreHUDTabTargetMarks", "Target Marks", 160)
   local btnLeveling = makeTabButton("HardcoreHUDTabLeveling", "Leveling", 192)
+  local btnReputation = makeTabButton("HardcoreHUDTabReputation", "Reputation", 224)
 
   local function makePanel()
     local p = CreateFrame("Frame", nil, content)
@@ -122,6 +123,7 @@ function H.BuildOptions()
   local panelUtilities = makePanel()
   local panelTargetMarks = makePanel()
   local panelLeveling = makePanel()
+  local panelReputation = makePanel()
 
   -- Advanced panel: create two column containers to avoid overflow
   local advLeft = CreateFrame("Frame", nil, panelAdvanced)
@@ -134,7 +136,7 @@ function H.BuildOptions()
   advRight:SetPoint("BOTTOMRIGHT", panelAdvanced, "BOTTOMRIGHT", 0, 0)
 
   local function showPanel(p)
-    panelLayout:Hide(); panelWarnings:Hide(); panelRemind:Hide(); panelAdvanced:Hide(); panelUtilities:Hide(); panelTargetMarks:Hide(); panelLeveling:Hide()
+    panelLayout:Hide(); panelWarnings:Hide(); panelRemind:Hide(); panelAdvanced:Hide(); panelUtilities:Hide(); panelTargetMarks:Hide(); panelLeveling:Hide(); panelReputation:Hide()
     p:Show()
   end
   btnLayout:SetScript("OnClick", function() showPanel(panelLayout) end)
@@ -144,6 +146,7 @@ function H.BuildOptions()
   btnUtilities:SetScript("OnClick", function() showPanel(panelUtilities) end)
   btnTargetMarks:SetScript("OnClick", function() showPanel(panelTargetMarks) end)
   btnLeveling:SetScript("OnClick", function() showPanel(panelLeveling) end)
+  btnReputation:SetScript("OnClick", function() showPanel(panelReputation) end)
   showPanel(panelLayout)
   
   -- Hide range display test when options frame closes
@@ -1221,6 +1224,35 @@ end
       HardcoreHUDDB.debug = HardcoreHUDDB.debug or {}
       HardcoreHUDDB.debug.tooltips = (a[3] == "on")
       print("HardcoreHUD: tooltip debug="..(HardcoreHUDDB.debug.tooltips and "ON" or "OFF"))
+    elseif cmd == "rep" or cmd == "reputation" then
+      -- Toggle reputation tracker
+      if H.ToggleReputationTracker then
+        H.ToggleReputationTracker()
+      else
+        print("HardcoreHUD: Reputation tracker not available")
+      end
+    elseif cmd == "rep" and a[2] == "debug" then
+      -- Toggle rep debug mode
+      HardcoreHUDDB.reputation = HardcoreHUDDB.reputation or {}
+      HardcoreHUDDB.reputation.debug = not HardcoreHUDDB.reputation.debug
+      print("HardcoreHUD: Rep debug = " .. (HardcoreHUDDB.reputation.debug and "ON" or "OFF"))
+      if HardcoreHUDDB.reputation.debug then
+        print("HardcoreHUD: Kill a mob to see raw rep message")
+      end
+    elseif cmd == "rep" and a[2] == "reset" then
+      -- Reset detected rep values
+      HardcoreHUDDB.reputation = HardcoreHUDDB.reputation or {}
+      HardcoreHUDDB.reputation.lastDetectedRep = nil
+      HardcoreHUDDB.reputation.autoDetected = false
+      HardcoreHUDDB.reputation.detectedRep = {}
+      print("HardcoreHUD: Rep detection reset. Kill a mob to re-detect.")
+      if H.UpdateReputationTracker then H.UpdateReputationTracker() end
+    elseif cmd == "rep" and a[2] then
+      -- Set faction: /hh rep <faction name>
+      local factionName = table.concat(a, " ", 2)
+      if H.SetTrackedFaction then
+        H.SetTrackedFaction(factionName)
+      end
     elseif cmd == "emergency" and a[2] and (a[2] == "on" or a[2] == "off") then
       HardcoreHUDDB.emergency = HardcoreHUDDB.emergency or { enabled = true, hpThreshold = 0.50 }
       HardcoreHUDDB.emergency.enabled = (a[2] == "on")
@@ -1355,6 +1387,131 @@ end
   lvDesc:SetTextColor(0.7, 0.7, 0.7, 1)
   lvDesc:SetJustifyH("LEFT")
   
+  -- ============================================================================
+  -- Reputation Panel
+  -- ============================================================================
+  HardcoreHUDDB.reputation = HardcoreHUDDB.reputation or { 
+    enabled = false, 
+    selectedFaction = "Timbermaw Hold", 
+    customRepPerMob = 10,
+    locked = false,
+    pos = { x = 200, y = -350 }
+  }
+  
+  local repTitle = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  repTitle:SetPoint("TOPLEFT", panelReputation, "TOPLEFT", 0, -8)
+  repTitle:SetText("Reputation Tracker")
+  
+  -- Toggle checkbox
+  local repToggle = SafeCheckButton("HardcoreHUDRepToggle", panelReputation, "OptionsCheckButtonTemplate")
+  repToggle:ClearAllPoints()
+  repToggle:SetPoint("TOPLEFT", repTitle, "BOTTOMLEFT", 0, -16)
+  repToggle:SetChecked(HardcoreHUDDB.reputation.enabled == true)
+  if _G[repToggle:GetName().."Text"] then _G[repToggle:GetName().."Text"]:SetText("Show Reputation Tracker") end
+  repToggle:SetScript("OnClick", function(self)
+    HardcoreHUDDB.reputation.enabled = self:GetChecked()
+    if not H.reputationTracker then H.InitReputationTracker() end
+    if self:GetChecked() then
+      H.reputationTracker:Show()
+      H.UpdateReputationTracker()
+      print("HardcoreHUD: Reputation tracker ON")
+    else
+      H.reputationTracker:Hide()
+      print("HardcoreHUD: Reputation tracker OFF")
+    end
+  end)
+  
+  -- Lock checkbox
+  local repLock = SafeCheckButton("HardcoreHUDRepLock", panelReputation, "OptionsCheckButtonTemplate")
+  repLock:ClearAllPoints()
+  repLock:SetPoint("TOPLEFT", repToggle, "BOTTOMLEFT", 0, -10)
+  repLock:SetChecked(HardcoreHUDDB.reputation.locked == true)
+  if _G[repLock:GetName().."Text"] then _G[repLock:GetName().."Text"]:SetText("Lock Position") end
+  repLock:SetScript("OnClick", function(self)
+    HardcoreHUDDB.reputation.locked = self:GetChecked()
+  end)
+  
+  -- Faction Selection Label
+  local repFactionLabel = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  repFactionLabel:SetPoint("TOPLEFT", repLock, "BOTTOMLEFT", 0, -20)
+  repFactionLabel:SetText("Select Faction:")
+  repFactionLabel:SetTextColor(1, 0.84, 0, 1)
+  
+  -- Faction Dropdown (using simple buttons since Classic doesn't have modern dropdowns)
+  local factions = {
+    "Timbermaw Hold",
+    "Argent Dawn",
+    "Thorium Brotherhood",
+    "Cenarion Circle",
+    "Hydraxian Waterlords",
+    "Zandalar Tribe",
+    "Brood of Nozdormu",
+    "Wintersaber Trainers",
+    "Bloodsail Buccaneers",
+    "Darkmoon Faire",
+  }
+  
+  local selectedFactionText = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  selectedFactionText:SetPoint("TOPLEFT", repFactionLabel, "BOTTOMLEFT", 0, -8)
+  selectedFactionText:SetText("Current: " .. (HardcoreHUDDB.reputation.selectedFaction or "Timbermaw Hold"))
+  selectedFactionText:SetTextColor(0.8, 0.6, 1, 1)
+  
+  -- Create faction buttons in a scrollable-ish list
+  local factionButtons = {}
+  local factionListFrame = CreateFrame("Frame", nil, panelReputation)
+  factionListFrame:SetPoint("TOPLEFT", selectedFactionText, "BOTTOMLEFT", 0, -10)
+  factionListFrame:SetSize(200, 200)
+  
+  for i, factionName in ipairs(factions) do
+    local btn = CreateFrame("Button", "HardcoreHUDFactionBtn"..i, factionListFrame, "UIPanelButtonTemplate")
+    btn:SetSize(180, 20)
+    btn:SetPoint("TOPLEFT", factionListFrame, "TOPLEFT", 0, -((i-1) * 22))
+    btn:SetText(factionName)
+    btn:SetScript("OnClick", function()
+      HardcoreHUDDB.reputation.selectedFaction = factionName
+      selectedFactionText:SetText("Current: " .. factionName)
+      -- Update rep per mob from faction data
+      if H.SetTrackedFaction then H.SetTrackedFaction(factionName) end
+      if H.UpdateReputationTracker then H.UpdateReputationTracker() end
+    end)
+    factionButtons[i] = btn
+  end
+  
+  -- Rep per mob slider (right column)
+  local repPerMobLabel = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  repPerMobLabel:SetPoint("TOPLEFT", panelReputation, "TOPLEFT", 280, -60)
+  repPerMobLabel:SetText("Rep per Mob (Custom):")
+  
+  local repPerMobSlider = CreateFrame("Slider", "HardcoreHUDRepPerMobSlider", panelReputation, "OptionsSliderTemplate")
+  repPerMobSlider:ClearAllPoints()
+  repPerMobSlider:SetPoint("TOPLEFT", repPerMobLabel, "BOTTOMLEFT", 0, -16)
+  repPerMobSlider:SetMinMaxValues(1, 100)
+  repPerMobSlider:SetValueStep(1)
+  repPerMobSlider:SetValue(HardcoreHUDDB.reputation.customRepPerMob or 10)
+  if _G[repPerMobSlider:GetName().."Low"] then _G[repPerMobSlider:GetName().."Low"]:SetText("1") end
+  if _G[repPerMobSlider:GetName().."High"] then _G[repPerMobSlider:GetName().."High"]:SetText("100") end
+  if _G[repPerMobSlider:GetName().."Text"] then _G[repPerMobSlider:GetName().."Text"]:SetText("Rep/Mob: " .. (HardcoreHUDDB.reputation.customRepPerMob or 10)) end
+  repPerMobSlider:SetScript("OnValueChanged", function(self, val)
+    val = math.floor(val)
+    HardcoreHUDDB.reputation.customRepPerMob = val
+    if _G[self:GetName().."Text"] then _G[self:GetName().."Text"]:SetText("Rep/Mob: " .. val) end
+    if H.UpdateReputationTracker then H.UpdateReputationTracker() end
+  end)
+  
+  -- Info text
+  local repInfo = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  repInfo:SetPoint("TOPLEFT", repPerMobSlider, "BOTTOMLEFT", 0, -30)
+  repInfo:SetWidth(240)
+  repInfo:SetText("The tracker shows how many mobs you need to kill to reach the next reputation standing.\n\nFaction default rep values are used automatically, but you can override with the slider above.\n\nHover over the tracker in-game to see turn-in options.")
+  repInfo:SetTextColor(0.7, 0.7, 0.7, 1)
+  repInfo:SetJustifyH("LEFT")
+  
+  local repDesc = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  repDesc:SetPoint("BOTTOMLEFT", panelReputation, "BOTTOMLEFT", 0, 10)
+  repDesc:SetText("Tip: Type /hh rep or /hh reputation to toggle the tracker")
+  repDesc:SetTextColor(0.5, 0.5, 0.5, 1)
+  repDesc:SetJustifyH("LEFT")
+
   -- Register with Blizzard Interface Options on PLAYER_LOGIN
   local regFrame = CreateFrame("Frame")
   regFrame:RegisterEvent("PLAYER_LOGIN")
