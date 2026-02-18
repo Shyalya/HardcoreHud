@@ -682,6 +682,250 @@ shieldCombatFrame:SetScript("OnEvent", function(self, event, ...)
   end
 end)
 
+-- ============================================================================
+-- Spirit Tap Purple Border Tracking (Priest)
+-- Shows a purple border around Mana bar that shrinks as Spirit Tap expires
+-- ============================================================================
+
+H.spiritTapState = H.spiritTapState or {
+  active = false,
+  expirationTime = 0,
+  duration = 15,  -- Spirit Tap lasts 15 seconds
+}
+
+-- Spirit Tap buff names in different locales
+local SPIRIT_TAP_NAMES = {
+  ["Spirit Tap"] = true,
+  ["Willensentzug"] = true,  -- German
+  ["Toucher spirituel"] = true,  -- French
+  ["Toque espiritual"] = true,  -- Spanish
+  ["Tocco Spirituale"] = true,  -- Italian
+  ["Toque Espiritual"] = true,  -- Portuguese
+}
+
+-- Check if player has Spirit Tap buff
+local function GetSpiritTapInfo()
+  for i = 1, 40 do
+    local name, icon, count, debuffType, duration, expirationTime, unitCaster = UnitBuff("player", i)
+    if not name then break end
+    
+    -- Check by exact name match
+    if SPIRIT_TAP_NAMES[name] then
+      return true, duration or 15, expirationTime or (GetTime() + 15)
+    end
+    
+    -- Pattern matching for localized names
+    local lowerName = string.lower(name or "")
+    if string.find(lowerName, "spirit tap") or 
+       string.find(lowerName, "willensentzug") or
+       string.find(lowerName, "toucher spirituel") then
+      SPIRIT_TAP_NAMES[name] = true
+      return true, duration or 15, expirationTime or (GetTime() + 15)
+    end
+  end
+  
+  return false, 0, 0
+end
+
+-- Build the purple Spirit Tap border around Mana bar
+function H.BuildSpiritTapBorder()
+  if H.spiritTapBorder then return end
+  if not bars.pow then return end
+  
+  local pow = bars.pow
+  local borderWidth = 3
+  
+  -- Create container frame
+  local stFrame = CreateFrame("Frame", nil, pow)
+  stFrame:SetAllPoints(pow)
+  stFrame:SetFrameLevel(pow:GetFrameLevel() + 10)
+  H.spiritTapBorder = stFrame
+  
+  -- Purple color (Spirit Tap theme)
+  local purpleR, purpleG, purpleB = 0.7, 0.3, 1.0
+  
+  -- Left border (shrinks from top to bottom based on time remaining)
+  local left = stFrame:CreateTexture(nil, "OVERLAY")
+  left:SetColorTexture(purpleR, purpleG, purpleB, 0.9)
+  left:SetWidth(borderWidth)
+  left:ClearAllPoints()
+  left:SetPoint("TOPLEFT", pow, "TOPLEFT", -borderWidth, 0)
+  stFrame.left = left
+  
+  -- Right border
+  local right = stFrame:CreateTexture(nil, "OVERLAY")
+  right:SetColorTexture(purpleR, purpleG, purpleB, 0.9)
+  right:SetWidth(borderWidth)
+  right:ClearAllPoints()
+  right:SetPoint("TOPRIGHT", pow, "TOPRIGHT", borderWidth, 0)
+  stFrame.right = right
+  
+  -- Top border (always visible when Spirit Tap is active)
+  local top = stFrame:CreateTexture(nil, "OVERLAY")
+  top:SetColorTexture(purpleR, purpleG, purpleB, 0.9)
+  top:SetHeight(borderWidth)
+  top:ClearAllPoints()
+  top:SetPoint("TOPLEFT", pow, "TOPLEFT", -borderWidth, borderWidth)
+  top:SetPoint("TOPRIGHT", pow, "TOPRIGHT", borderWidth, borderWidth)
+  stFrame.top = top
+  
+  -- Bottom border
+  local bottom = stFrame:CreateTexture(nil, "OVERLAY")
+  bottom:SetColorTexture(purpleR, purpleG, purpleB, 0.9)
+  bottom:SetHeight(borderWidth)
+  bottom:ClearAllPoints()
+  bottom:SetPoint("BOTTOMLEFT", pow, "BOTTOMLEFT", -borderWidth, -borderWidth)
+  bottom:SetPoint("BOTTOMRIGHT", pow, "BOTTOMRIGHT", borderWidth, -borderWidth)
+  stFrame.bottom = bottom
+  
+  -- Inner glow effect
+  local glow = pow:CreateTexture(nil, "OVERLAY")
+  glow:SetAllPoints(pow)
+  glow:SetColorTexture(purpleR, purpleG, purpleB, 0.15)
+  glow:SetBlendMode("ADD")
+  stFrame.glow = glow
+  
+  -- Timer text
+  local timerText = stFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  timerText:SetPoint("TOP", pow, "BOTTOM", 0, -4)
+  timerText:SetTextColor(purpleR, purpleG, purpleB, 1)
+  if STANDARD_TEXT_FONT then timerText:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE") end
+  stFrame.timerText = timerText
+  
+  -- Hide by default
+  stFrame:Hide()
+end
+
+-- Update Spirit Tap border visuals
+function H.UpdateSpiritTapBorder()
+  if not H.spiritTapBorder then H.BuildSpiritTapBorder() end
+  if not H.spiritTapBorder or not bars.pow then return end
+  
+  local state = H.spiritTapState
+  local frame = H.spiritTapBorder
+  
+  -- Check if Spirit Tap buff is active
+  local hasSpiritTap, duration, expirationTime = GetSpiritTapInfo()
+  
+  if not hasSpiritTap then
+    state.active = false
+    if frame.left then frame.left:Hide() end
+    if frame.right then frame.right:Hide() end
+    if frame.top then frame.top:Hide() end
+    if frame.bottom then frame.bottom:Hide() end
+    if frame.glow then frame.glow:Hide() end
+    if frame.timerText then frame.timerText:Hide() end
+    frame:Hide()
+    return
+  end
+  
+  -- Spirit Tap is active
+  state.active = true
+  state.expirationTime = expirationTime
+  state.duration = duration or 15
+  
+  -- Calculate remaining time percentage
+  local now = GetTime()
+  local remaining = math.max(0, expirationTime - now)
+  local pct = remaining / state.duration
+  if pct > 1 then pct = 1 end
+  if pct < 0.05 then pct = 0.05 end
+  
+  local barHeight = bars.pow:GetHeight() or 200
+  local borderWidth = 3
+  
+  -- Border height shrinks from top as time runs out
+  local borderHeight = math.max(2, barHeight * pct)
+  
+  -- Update left border (anchored to top, shrinks downward)
+  if frame.left then
+    frame.left:ClearAllPoints()
+    frame.left:SetPoint("TOPLEFT", bars.pow, "TOPLEFT", -borderWidth, 0)
+    frame.left:SetWidth(borderWidth)
+    frame.left:SetHeight(borderHeight)
+    frame.left:Show()
+  end
+  
+  -- Update right border
+  if frame.right then
+    frame.right:ClearAllPoints()
+    frame.right:SetPoint("TOPRIGHT", bars.pow, "TOPRIGHT", borderWidth, 0)
+    frame.right:SetWidth(borderWidth)
+    frame.right:SetHeight(borderHeight)
+    frame.right:Show()
+  end
+  
+  -- Top border always visible
+  if frame.top then frame.top:Show() end
+  
+  -- Bottom border only visible when >50% time remaining
+  if frame.bottom then
+    if pct > 0.5 then
+      frame.bottom:Show()
+    else
+      frame.bottom:Hide()
+    end
+  end
+  
+  -- Glow effect
+  if frame.glow then
+    frame.glow:Show()
+    local glowAlpha = 0.05 + (pct * 0.15)
+    frame.glow:SetAlpha(glowAlpha)
+  end
+  
+  -- Timer text
+  if frame.timerText then
+    frame.timerText:SetText(string.format("%.1fs", remaining))
+    frame.timerText:Show()
+    
+    -- Pulse when <5 seconds
+    if remaining < 5 then
+      local pulse = 0.5 + 0.5 * math.abs(math.sin(GetTime() * 4))
+      frame.timerText:SetAlpha(pulse)
+    else
+      frame.timerText:SetAlpha(1)
+    end
+  end
+  
+  -- Pulse borders when <3 seconds
+  local alpha = 0.9
+  if pct < 0.20 then
+    alpha = 0.5 + 0.5 * math.abs(math.sin(GetTime() * 5))
+  end
+  if frame.left then frame.left:SetAlpha(alpha) end
+  if frame.right then frame.right:SetAlpha(alpha) end
+  if frame.top then frame.top:SetAlpha(alpha) end
+  
+  frame:Show()
+end
+
+-- Spirit Tap update frame (runs every frame for smooth animation)
+local spiritTapUpdater = CreateFrame("Frame")
+spiritTapUpdater:SetScript("OnUpdate", function(self, elapsed)
+  -- Only update if Spirit Tap state is active or we need to check
+  if H.spiritTapState and H.spiritTapState.active then
+    H.UpdateSpiritTapBorder()
+  end
+end)
+
+-- Register for buff events
+local spiritTapEventFrame = CreateFrame("Frame")
+spiritTapEventFrame:RegisterEvent("UNIT_AURA")
+spiritTapEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+spiritTapEventFrame:SetScript("OnEvent", function(self, event, unit)
+  if event == "PLAYER_ENTERING_WORLD" or (event == "UNIT_AURA" and unit == "player") then
+    -- Check for Spirit Tap
+    local hasSpiritTap = GetSpiritTapInfo()
+    if hasSpiritTap then
+      if not H.spiritTapBorder then H.BuildSpiritTapBorder() end
+      H.UpdateSpiritTapBorder()
+    elseif H.spiritTapState and H.spiritTapState.active then
+      H.UpdateSpiritTapBorder()  -- Will hide it
+    end
+  end
+end)
+
 
 function H.ApplyBarTexture()
   if bars.hp then bars.hp:SetStatusBarTexture("Interface/TargetingFrame/UI-StatusBar") end
@@ -793,6 +1037,8 @@ function H.BuildBars()
   H.UpdateBarColors()
   -- Build shield border around HP bar (for PW:S tracking)
   H.BuildShieldBorder()
+  -- Build Spirit Tap border around Mana bar
+  H.BuildSpiritTapBorder()
   -- allow dragging from bars and combo
   attachDrag(hp); attachDrag(pow)
 
