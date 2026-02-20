@@ -138,6 +138,18 @@ function H.GetReputationFactionList()
   return list
 end
 
+-- Capital substring list for detection
+local CAPITAL_SUBSTRINGS = { "stormwind", "ironforge", "darnassus", "gadgetzan", "orgrimmar", "thunder bluff", "undercity", "silvermoon", "ratchet" }
+
+function H.IsCapital(name)
+  if not name then return false end
+  local n = string.lower(name)
+  for _, sub in ipairs(CAPITAL_SUBSTRINGS) do
+    if string.find(n, sub, 1, true) then return true end
+  end
+  return false
+end
+
 -- Get all tracked factions from the character's reputation panel
 function H.GetCharacterFactions()
   local factions = {}
@@ -212,6 +224,7 @@ function H.CalculateMobsNeeded(factionName, repPerMob)
     repNeeded = repNeeded,
     mobsNeeded = mobsNeeded,
     standingName = info.standingName,
+    standingID = info.standingID,
     nextStanding = nextStanding and nextStanding.name or "Unknown",
     isExalted = false,
     repPerMob = repPerMob,
@@ -229,6 +242,7 @@ function H.InitReputationTracker()
     showBar = true,
     showMobsNeeded = true,
     showRepPerMob = true,
+    showCapital = true,
     locked = false,
     pos = { x = 200, y = -350 },
   }
@@ -332,6 +346,14 @@ function H.InitReputationTracker()
   infoText:SetTextColor(0.7, 0.7, 0.7, 0.8)
   if STANDARD_TEXT_FONT then infoText:SetFont(STANDARD_TEXT_FONT, 9, "") end
   f.infoText = infoText
+
+  -- Capital runecloth requirement text
+  local capitalText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  capitalText:SetPoint("TOPLEFT", f, "TOPLEFT", 6, -74)
+  capitalText:SetText("")
+  capitalText:SetTextColor(0.8, 0.7, 1, 0.95)
+  if STANDARD_TEXT_FONT then capitalText:SetFont(STANDARD_TEXT_FONT, 9, "") end
+  f.capitalText = capitalText
   
   -- Make draggable
   f:EnableMouse(true)
@@ -542,12 +564,35 @@ function H.UpdateReputationTracker()
   -- Update faction name
   f.factionText:SetText(factionName)
   
-  -- Update standing
-  f.standingText:SetText(calc.standingName)
-  
-  -- Update bar
-  local percent = calc.max > 0 and (calc.current / calc.max * 100) or 100
-  f.repBar:SetValue(percent)
+  -- If this is a capital, show only Runecloth turn-in requirements (no mobs)
+  if H.IsCapital(factionName) then
+    -- Update basic rep display
+    f.standingText:SetText(calc.standingName)
+    local percent = calc.max > 0 and (calc.current / calc.max * 100) or 100
+    f.repBar:SetValue(percent)
+    f.repText:SetText(string.format("%d / %d", calc.current, calc.max))
+
+    -- Capital runecloth calculation
+    local repNeeded = calc.repNeeded
+    if repNeeded <= 0 then
+      if f.capitalText then f.capitalText:SetText("Hauptstadt: Bereits maximale Stufe") end
+      f.mobsText:SetText("")
+      f.infoText:SetText("")
+      return
+    end
+    local repPerTurnin = 50
+    local race = string.lower((UnitRace and UnitRace("player") or "") or "")
+    local isHuman = (string.find(race, "human") or string.find(race, "mensch")) and true or false
+    local clothPerTurnin = isHuman and 55 or 60
+    local turninsNeeded = math.ceil(repNeeded / repPerTurnin)
+    local clothNeeded = turninsNeeded * clothPerTurnin
+    if f.capitalText then
+      f.capitalText:SetText(string.format("%d Runenstoff (~%d Abgaben à %d Ruf) für %s", clothNeeded, turninsNeeded, repPerTurnin, factionName))
+    end
+    f.mobsText:SetText("")
+    f.infoText:SetText("")
+    return
+  end
   
   -- Color based on standing
   local colors = {
@@ -561,8 +606,25 @@ function H.UpdateReputationTracker()
     [8] = {1.0, 0.84, 0}, -- Exalted (gold)
   }
   local info = H.GetReputationInfo(factionName)
-  local color = colors[info and info.standingID or 4] or {0.6, 0.2, 0.8}
+  local standingID = (calc and calc.standingID) or (info and info.standingID) or 4
+  local color = colors[standingID] or {0.6, 0.2, 0.8}
+  -- Debug output when enabled
+  if HardcoreHUDDB.reputation and HardcoreHUDDB.reputation.debug then
+    local si = tostring(info and info.standingID or "nil")
+    local cs = tostring(calc and calc.standingID or "nil")
+    print(string.format("|cffffcc00REP DEBUG:|r %s standingID(info)=%s standingID(calc)=%s color=%.2f,%.2f,%.2f", factionName, si, cs, color[1], color[2], color[3]))
+  end
   f.repBar:SetStatusBarColor(color[1], color[2], color[3], 0.9)
+
+  -- Ensure the standing label and bar value are updated when switching factions.
+  -- Previously the bar retained the last faction's percentage and label.
+  local standingName = (calc and calc.standingName) and calc.standingName or "Unknown"
+  f.standingText:SetText(standingName)
+  local percent = 100
+  if calc and calc.max and calc.max > 0 then
+    percent = (calc.current / calc.max) * 100
+  end
+  f.repBar:SetValue(percent)
   
   -- Update rep text
   f.repText:SetText(string.format("%d / %d", calc.current, calc.max))
@@ -594,6 +656,12 @@ function H.UpdateReputationTracker()
       f.infoText:SetText("")
     end
   end
+
+  -- Ensure the capital text is only shown when the selected faction is a capital.
+  -- Previously we always scanned and showed a separate capital summary which caused
+  -- Runecloth info to appear even when a non-capital faction (e.g. Argent Dawn)
+  -- was selected. Clear the field for non-capital selections.
+  if f.capitalText then f.capitalText:SetText("") end
 end
 
 -- Toggle visibility

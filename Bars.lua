@@ -428,6 +428,27 @@ function H.OnShieldApplied(spellId)
   state.estimatedMax = 0
   state.shieldPct = 1.0  -- Start at 100%
   state.spellId = spellId
+
+  -- Try to get the actual absorb amount from API if available
+  if UnitGetTotalAbsorbs then
+    local ok, cur = pcall(UnitGetTotalAbsorbs, "player")
+    if ok and type(cur) == "number" and cur > 0 then
+      state.maxAbsorb = cur
+      state.currentAbsorb = cur
+    else
+      -- Fallback to estimate by spell rank
+      local bestId = spellId or GetBestPWSRankForLevel()
+      local est = EstimateShieldAbsorb(bestId)
+      state.maxAbsorb = est
+      state.currentAbsorb = est
+    end
+  else
+    -- No API: estimate based on spell rank
+    local bestId = spellId or GetBestPWSRankForLevel()
+    local est = EstimateShieldAbsorb(bestId)
+    state.maxAbsorb = est
+    state.currentAbsorb = est
+  end
   
   -- Reset HP tracker when shield is applied
   if H._shieldHPTracker then
@@ -452,6 +473,7 @@ function H.OnShieldAbsorb(amount)
   if not state or not state.active then return end
   
   -- Clamp absorbed amount to not exceed current shield
+  state.currentAbsorb = state.currentAbsorb or state.maxAbsorb or 0
   local actualAbsorbed = math.min(amount, state.currentAbsorb)
   local before = state.currentAbsorb
   state.currentAbsorb = math.max(0, state.currentAbsorb - actualAbsorbed)
@@ -669,14 +691,26 @@ shieldCombatFrame:SetScript("OnEvent", function(self, event, ...)
     -- Add to total absorbed
     state.totalAbsorbed = (state.totalAbsorbed or 0) + absorbed
     
-    -- Estimate max on first hit (roughly 5 hits per shield)
-    if not state.estimatedMax or state.estimatedMax <= 0 then
-      state.estimatedMax = absorbed * 5
+    -- If we know the max absorb (from API or estimate), use it; otherwise build an estimate
+    if not state.maxAbsorb or state.maxAbsorb <= 0 then
+      -- First hit: set a conservative estimated max based on first absorb
+      state.estimatedMax = state.estimatedMax or (absorbed * 5)
+    end
+
+    local denom = (state.maxAbsorb and state.maxAbsorb > 0) and state.maxAbsorb or state.estimatedMax
+    if denom and denom > 0 then
+      local usedPct = (state.totalAbsorbed or 0) / denom
+      state.shieldPct = math.max(0.05, 1.0 - usedPct)
+    else
+      state.shieldPct = 1.0
     end
     
-    -- Calculate remaining percentage
-    local usedPct = state.totalAbsorbed / state.estimatedMax
-    state.shieldPct = math.max(0.05, 1.0 - usedPct)
+    -- If we have a maxAbsorb value, update currentAbsorb accordingly
+    if state.maxAbsorb and state.maxAbsorb > 0 then
+      state.currentAbsorb = math.max(0, state.maxAbsorb - (state.totalAbsorbed or 0))
+    else
+      state.currentAbsorb = math.max(0, (state.estimatedMax or 0) - (state.totalAbsorbed or 0))
+    end
     
     H.UpdateShieldBorder()
   end

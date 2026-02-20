@@ -1437,45 +1437,65 @@ end
   repFactionLabel:SetText("Select Faction:")
   repFactionLabel:SetTextColor(1, 0.84, 0, 1)
   
-  -- Faction Dropdown (using simple buttons since Classic doesn't have modern dropdowns)
-  local factions = {
-    "Timbermaw Hold",
-    "Argent Dawn",
-    "Thorium Brotherhood",
-    "Cenarion Circle",
-    "Hydraxian Waterlords",
-    "Zandalar Tribe",
-    "Brood of Nozdormu",
-    "Wintersaber Trainers",
-    "Bloodsail Buccaneers",
-    "Darkmoon Faire",
-  }
+  -- Faction Dropdown: build from character factions + common capitals (avoid duplicates)
+  local factionsMap = {}
+  -- Add factions the character currently has
+  local charFactions = H.GetCharacterFactions and H.GetCharacterFactions() or {}
+  for name, _ in pairs(charFactions) do factionsMap[name] = true end
+
+  -- Do not add hardcoded capital names here. Only include factions the character
+  -- actually has or those present in `FACTION_DATA` to avoid showing non-existent
+  -- entries (e.g. "Exodar" on clients without that reputation).
+
+  -- Also add known special factions from FACTION_DATA so defaults remain selectable
+  for k, _ in pairs(H.GetFactionData and H.GetFactionData() or {}) do factionsMap[k] = true end
+
+  -- Convert map to sorted array
+  local factions = {}
+  for name, _ in pairs(factionsMap) do table.insert(factions, name) end
+  table.sort(factions)
   
-  local selectedFactionText = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  selectedFactionText:SetPoint("TOPLEFT", repFactionLabel, "BOTTOMLEFT", 0, -8)
-  selectedFactionText:SetText("Current: " .. (HardcoreHUDDB.reputation.selectedFaction or "Timbermaw Hold"))
-  selectedFactionText:SetTextColor(0.8, 0.6, 1, 1)
-  
-  -- Create faction buttons in a scrollable-ish list
-  local factionButtons = {}
-  local factionListFrame = CreateFrame("Frame", nil, panelReputation)
-  factionListFrame:SetPoint("TOPLEFT", selectedFactionText, "BOTTOMLEFT", 0, -10)
-  factionListFrame:SetSize(200, 200)
-  
+  -- Dropdown-style selector (compact): shows current selection and opens a popup list
+  local dropdown = CreateFrame("Button", "HardcoreHUDRepDropdown", panelReputation, "UIPanelButtonTemplate")
+  dropdown:SetPoint("TOPLEFT", repFactionLabel, "BOTTOMLEFT", 0, -8)
+  dropdown:SetSize(220, 22)
+  dropdown:SetText(HardcoreHUDDB.reputation.selectedFaction or "Select Faction")
+
+  local dropdownFrame = CreateFrame("Frame", "HardcoreHUDRepDropdownFrame", panelReputation)
+  dropdownFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -6)
+  dropdownFrame:SetSize(220, 200)
+  dropdownFrame:Hide()
+
+  -- Close dropdown when clicking outside
+  dropdownFrame:SetScript("OnHide", function(self)
+    -- nothing for now
+  end)
+
+  -- Populate dropdown with faction names (re-use `factions` array)
   for i, factionName in ipairs(factions) do
-    local btn = CreateFrame("Button", "HardcoreHUDFactionBtn"..i, factionListFrame, "UIPanelButtonTemplate")
-    btn:SetSize(180, 20)
-    btn:SetPoint("TOPLEFT", factionListFrame, "TOPLEFT", 0, -((i-1) * 22))
+    local btn = CreateFrame("Button", nil, dropdownFrame, "UIPanelButtonTemplate")
+    btn:SetSize(208, 20)
+    btn:SetPoint("TOPLEFT", dropdownFrame, "TOPLEFT", 6, -((i-1) * 22))
     btn:SetText(factionName)
     btn:SetScript("OnClick", function()
       HardcoreHUDDB.reputation.selectedFaction = factionName
-      selectedFactionText:SetText("Current: " .. factionName)
-      -- Update rep per mob from faction data
+      dropdown:SetText(factionName)
+      dropdownFrame:Hide()
       if H.SetTrackedFaction then H.SetTrackedFaction(factionName) end
       if H.UpdateReputationTracker then H.UpdateReputationTracker() end
     end)
-    factionButtons[i] = btn
   end
+
+  dropdown:SetScript("OnClick", function(self)
+    if dropdownFrame:IsShown() then dropdownFrame:Hide() else dropdownFrame:Show() end
+  end)
+
+  -- Close button for the dropdown
+  local closeBtn = CreateFrame("Button", nil, dropdownFrame, "UIPanelButtonTemplate")
+  closeBtn:SetSize(208, 20)
+  closeBtn:SetPoint("BOTTOMLEFT", dropdownFrame, "BOTTOMLEFT", 6, 6)
+  closeBtn:SetText("Close")
+  closeBtn:SetScript("OnClick", function() dropdownFrame:Hide() end)
   
   -- Rep per mob slider (right column)
   local repPerMobLabel = panelReputation:CreateFontString(nil, "OVERLAY", "GameFontNormal")
